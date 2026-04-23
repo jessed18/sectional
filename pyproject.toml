@@ -1,0 +1,12 @@
+[tool.basedpyright]
+exclude = [
+    "**/venv/**",
+    "**/.venv/**",
+    "**/site-packages/**",
+]
+ignore = [
+    "**/venv/**",
+    "**/.venv/**",
+    "**/site-packages/**",
+]
+typeCheckingMode = "basic"

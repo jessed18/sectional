@@ -1,0 +1,21 @@
+{
+  "exclude": [
+    "backend/venv",
+    "backend/venv/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/site-packages/**",
+    "node_modules",
+    "**/node_modules/**"
+  ],
+  "ignore": [
+    "backend/venv",
+    "backend/venv/**",
+    "**/venv/**",
+    "**/site-packages/**"
+  ],
+  "venvPath": "backend",
+  "venv": "venv",
+  "pythonVersion": "3.9",
+  "typeCheckingMode": "basic"
+}

@@ -1,4 +1,4 @@
-# Python
+# python
 venv/
 .venv/
 __pycache__/
@@ -11,12 +11,12 @@ build/
 .mypy_cache/
 .ruff_cache/
 
-# Environment
+# environment
 .env
 .env.*
 !.env.example
 
-# Node
+# node
 node_modules/
 .next/
 out/
@@ -24,13 +24,14 @@ out/
 *.log
 npm-debug.log*
 
-# OS / IDE
+# os / ide
 .DS_Store
 .idea/
 .vscode/
 
-# Local uploads / caches (adjust if you commit these intentionally)
+# local uploads / caches (adjust if you commit these intentionally)
 *.wav
 *.mp3
 uploads/
+outputs/
 .cache/
