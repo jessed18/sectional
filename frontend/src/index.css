@@ -1,0 +1,44 @@
+:root {
+  --bg: #0f1210;
+  --surface: #181d1a;
+  --border: #2a332d;
+  --text: #e8ebe9;
+  --muted: #8b9690;
+  --accent: #3d9a7a;
+  --accent-dim: #2d6b56;
+  --danger: #c45c5c;
+  --radius: 12px;
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-display: "Fraunces", Georgia, serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}

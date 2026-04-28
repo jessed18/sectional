@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -13,6 +15,18 @@ from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 
 load_dotenv()
+
+_rag_service = None
+
+
+def _rag():
+    """lazy import so the api can boot if optional rag deps are not installed yet."""
+    global _rag_service
+    if _rag_service is None:
+        import rag_service as _rs
+
+        _rag_service = _rs
+    return _rag_service
 
 app = Flask(__name__)
 CORS(app)
@@ -68,6 +82,17 @@ rules:
 - if they use informal language like "the high part" = soprano, "the low part" = bass, "the guys" = tenor or bass, "the women" = soprano or alto
 - if they say something like "everything except the alto", set part to "alto" and add a note in interpretation that they want the OTHER parts
 """
+
+
+def _analyze_system_prompt(rag_context: str | None) -> str:
+    if not rag_context:
+        return system_prompt
+    return (
+        system_prompt
+        + "\n\n---\nretrieved excerpts from the choir sheet-music / rehearsal knowledge base "
+        "(use when helpful for voice-part or score terminology; ignore if irrelevant):\n"
+        + rag_context
+    )
 
 
 # =====================
@@ -132,11 +157,19 @@ def analyze_request():
     if not user_input:
         return jsonify({"error": "no text provided"}), 400
 
+    use_rag = bool(data.get("use_rag"))
+    rag_context = None
+    if use_rag:
+        try:
+            rag_context = _rag().query_context(user_input, n_results=5)
+        except Exception:
+            rag_context = None
+
     try:
         message = client.messages.create(
             model=ANTHROPIC_MODEL,
             max_tokens=300,
-            system=system_prompt,
+            system=_analyze_system_prompt(rag_context),
             messages=[{"role": "user", "content": user_input}],
         )
 
@@ -258,6 +291,72 @@ def job_status(job_id):
             },
         }
     )
+
+
+@app.route("/rag/stats", methods=["GET"])
+def rag_stats():
+    try:
+        n = _rag().collection_count()
+    except Exception as e:
+        return jsonify({"error": str(e), "documents": 0}), 500
+    return jsonify({"documents": n})
+
+
+@app.route("/rag/ingest", methods=["POST"])
+def rag_ingest():
+    """upload pdf, markdown, or plain text into the local vector store."""
+    src = request.form.get("source") or "upload"
+
+    if "file" in request.files and request.files["file"].filename:
+        f = request.files["file"]
+        name = f.filename or "upload"
+        raw = f.read()
+        lower = name.lower()
+        try:
+            if lower.endswith(".pdf"):
+                added = _rag().ingest_pdf(raw, source=src or name)
+            else:
+                text = raw.decode("utf-8", errors="replace")
+                added = _rag().ingest_plaintext(text, source=src or name)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"chunks_added": added, "source": src or name})
+
+    data = request.get_json(silent=True) or {}
+    text = data.get("text", "")
+    if not text:
+        return jsonify({"error": "no file or text provided"}), 400
+    try:
+        added = _rag().ingest_plaintext(text, source=data.get("source", "json"))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"chunks_added": added, "source": data.get("source", "json")})
+
+
+@app.route("/rag/query", methods=["POST"])
+def rag_query_debug():
+    """return raw retrieved chunks (for debugging the knowledge base)."""
+    data = request.get_json(silent=True) or {}
+    q = data.get("text", "")
+    if not q:
+        return jsonify({"error": "no text provided"}), 400
+    try:
+        ctx = _rag().query_context(q, n_results=int(data.get("n", 5)))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"context": ctx})
+
+
+@app.route("/rag/reset", methods=["POST"])
+def rag_reset():
+    """dev-only: wipe the embedded knowledge store."""
+    if os.getenv("ALLOW_RAG_RESET") != "1":
+        return jsonify({"error": "set ALLOW_RAG_RESET=1 to confirm"}), 403
+    try:
+        _rag().reset_knowledge_base()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"status": "ok"})
 
 
 if __name__ == "__main__":

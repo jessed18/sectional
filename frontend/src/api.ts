@@ -1,0 +1,72 @@
+/** proxied to flask via vite (`/api` -> `http://127.0.0.1:5000`) */
+const prefix = "/api";
+
+export type HealthResponse = { status: string };
+
+export type AnalyzeResponse = {
+  part: string;
+  confidence: number;
+  interpretation: string;
+};
+
+export type SeparateResponse = {
+  job_id: string;
+  status: string;
+  stems: string[];
+  files: Record<string, string>;
+};
+
+export type JobResponse = {
+  job_id: string;
+  stems: string[];
+  files: Record<string, string>;
+};
+
+export type ApiError = { error: string; details?: string };
+
+async function parseJson<T>(res: Response): Promise<T | ApiError> {
+  const data = (await res.json()) as T | ApiError;
+  return data;
+}
+
+export async function getHealth(): Promise<HealthResponse | ApiError> {
+  const res = await fetch(`${prefix}/health`);
+  return parseJson<HealthResponse>(res);
+}
+
+export async function postAnalyze(
+  text: string,
+  useRag: boolean
+): Promise<AnalyzeResponse | ApiError> {
+  const res = await fetch(`${prefix}/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, use_rag: useRag }),
+  });
+  return parseJson<AnalyzeResponse>(res);
+}
+
+export async function postSeparate(
+  file: File
+): Promise<SeparateResponse | ApiError> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${prefix}/separate`, {
+    method: "POST",
+    body: fd,
+  });
+  return parseJson<SeparateResponse>(res);
+}
+
+export async function getJob(jobId: string): Promise<JobResponse | ApiError> {
+  const res = await fetch(`${prefix}/jobs/${jobId}`);
+  return parseJson<JobResponse>(res);
+}
+
+export function stemAudioUrl(jobId: string, stem: string): string {
+  return `${prefix}/stems/${jobId}/${stem}`;
+}
+
+export function isApiError(x: unknown): x is ApiError {
+  return typeof x === "object" && x !== null && "error" in x;
+}
