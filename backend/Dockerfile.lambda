@@ -1,0 +1,34 @@
+# container image for aws lambda (analyze + rag). demucs not included.
+# build: docker build -f Dockerfile.lambda -t sectional-lambda .
+# local: docker run -p 8080:8080 -e ANTHROPIC_API_KEY=... sectional-lambda
+
+FROM public.ecr.aws/docker/library/python:3.11-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.0 /lambda-adapter /opt/extensions/lambda-adapter
+
+WORKDIR /var/task
+
+COPY requirements-lambda.txt ./requirements-lambda.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements-lambda.txt
+
+COPY . .
+
+ENV PORT=8080
+ENV DISABLE_DEMUCS=1
+ENV CHROMA_PERSIST_DIR=/tmp/chroma
+ENV AWS_LWA_READINESS_CHECK_PATH=/health
+
+CMD exec gunicorn \
+    --bind 0.0.0.0:8080 \
+    --workers 1 \
+    --threads 4 \
+    --timeout 120 \
+    --access-logfile - \
+    --error-logfile - \
+    app:app

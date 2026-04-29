@@ -14,19 +14,29 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 
+import audio_emphasis
+
 load_dotenv()
 
+_RAG_MISSING = object()
 _rag_service = None
 
 
 def _rag():
-    """lazy import so the api can boot if optional rag deps are not installed yet."""
+    """optional RAG module - raises RuntimeError if chromadb/rag_service not installed."""
     global _rag_service
+    if _rag_service is _RAG_MISSING:
+        raise RuntimeError("RAG is not installed (rag_service missing)")
     if _rag_service is None:
-        import rag_service as _rs
+        try:
+            import rag_service as _rs  # type: ignore[import-not-found]
 
-        _rag_service = _rs
+            _rag_service = _rs
+        except ImportError:
+            _rag_service = _RAG_MISSING
+            raise RuntimeError("RAG is not installed (rag_service missing)") from None
     return _rag_service
+
 
 app = Flask(__name__)
 CORS(app)
@@ -38,50 +48,59 @@ if not _api_key:
     )
 client = Anthropic(api_key=_api_key)
 
-# default: current sonnet on the claude api (older ids like claude-sonnet-4-20250514 often 404).
 _default_model = "claude-sonnet-4-6"
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", _default_model)
 
-# --- directories ---
 upload = Path("uploads")
 output = Path("outputs")
 upload.mkdir(exist_ok=True)
 output.mkdir(exist_ok=True)
 
-# --- demucs config ---
 demucs_model = "htdemucs"
 stem_names = ["vocals", "drums", "bass", "other"]
 
-VOICE_PARTS = frozenset({"soprano", "alto", "tenor", "bass", "vocals"})
+VOICE_PARTS = frozenset(
+    {"soprano", "alto", "mezzo", "tenor", "baritone", "bass", "vocals"}
+)
 
-# --- claude system prompt ---
 system_prompt = """you are a music audio processing assistant for a choral music tool called sectional.
 
-the user is a choir singer who wants to isolate specific vocal parts from a mixed choral recording.
+the user is a choir singer working from a mixed choral recording (after stem separation they already have a clean vocals track).
 
-your job: interpret their natural language request and return structured json.
+your job: interpret what voice part they want to hear clearly and return structured json.
 
-the available voice parts you can isolate are:
+the available voice parts are:
 - soprano
 - alto
+- mezzo (mezzo-soprano)
 - tenor
+- baritone
 - bass
-- vocals (all vocals combined)
+- vocals (all voices on the stem - no single-section boost)
 
-return ONLY valid json in this exact format, nothing else:
+return ONLY valid json in this shape (fill optional fields when you can infer them; use empty string if unknown):
 {
     "part": "soprano",
     "confidence": 0.95,
-    "interpretation": "user wants the soprano part isolated"
+    "interpretation": "short plain-language summary of what they want",
+    "frequency_range_hz": [250, 1000],
+    "coaching": "what to listen for in rehearsal (vowel shape, blend, etc.)",
+    "measure_cues": "e.g. entrance around rehearsal letter B - only if score context or user text implies it"
 }
 
 rules:
-- "part" must be one of: soprano, alto, tenor, bass, vocals
-- "confidence" is how sure you are about what they want (0.0 to 1.0)
-- if the request is unclear, set confidence below 0.5 and pick your best guess
-- if they use informal language like "the high part" = soprano, "the low part" = bass, "the guys" = tenor or bass, "the women" = soprano or alto
-- if they say something like "everything except the alto", set part to "alto" and add a note in interpretation that they want the OTHER parts
+- "part" must be one of: soprano, alto, mezzo, tenor, baritone, bass, vocals
+- default frequency_range_hz by part if unsure: soprano [250,1000], alto [200,700], mezzo [200,900], tenor [130,500], baritone [100,400], bass [80,350], vocals [80,1200]
+- "confidence" is 0.0 to 1.0
+- informal language: "high part" often soprano, "low part" often bass, "guys" tenor/bass, "women" soprano/alto; "mezzo" / "second soprano" → mezzo; "bari" / low male harmony → baritone
+- in interpretation, coaching, measure_cues: write for choir/a cappella singers first; use music terms (entrance, pickup, phrase, blend, tessitura). when useful, add a short parenthetical for engineers (e.g. "roughly this register in Hz" or "after the rest in m. 12")
 """
+
+
+def _safe_job_segment(seg: str) -> bool:
+    if not seg or ".." in seg or "/" in seg or "\\" in seg:
+        return False
+    return True
 
 
 def _analyze_system_prompt(rag_context: str | None) -> str:
@@ -89,15 +108,9 @@ def _analyze_system_prompt(rag_context: str | None) -> str:
         return system_prompt
     return (
         system_prompt
-        + "\n\n---\nretrieved excerpts from the choir sheet-music / rehearsal knowledge base "
-        "(use when helpful for voice-part or score terminology; ignore if irrelevant):\n"
+        + "\n\n---\noptional context from uploaded sheet-music / rehearsal notes (use if relevant):\n"
         + rag_context
     )
-
-
-# =====================
-# endpoints
-# =====================
 
 
 def _first_text_block(message) -> str:
@@ -108,7 +121,6 @@ def _first_text_block(message) -> str:
 
 
 def _parse_json_from_model(text: str):
-    """model may wrap json in markdown fences or add whitespace."""
     text = text.strip()
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL | re.IGNORECASE)
     if fence:
@@ -120,7 +132,6 @@ def _parse_json_from_model(text: str):
 
 
 def _normalize_analyze_response(parsed: dict) -> dict:
-    """fixed api shape; interpretation matches the documented example pattern."""
     part = parsed.get("part")
     if part not in VOICE_PARTS:
         raise ValueError(
@@ -134,12 +145,35 @@ def _normalize_analyze_response(parsed: dict) -> dict:
         raise ValueError(f'"confidence" must be a number, got {raw_conf!r}') from e
     confidence = round(max(0.0, min(1.0, confidence)), 2)
 
-    interpretation = f"user wants the {part} part isolated"
+    default_low, default_high = audio_emphasis.PART_BANDS_HZ.get(
+        part, audio_emphasis.PART_BANDS_HZ["vocals"]
+    )
+    low, high = default_low, default_high
+    fr = parsed.get("frequency_range_hz")
+    if isinstance(fr, (list, tuple)) and len(fr) == 2:
+        try:
+            low = float(fr[0])
+            high = float(fr[1])
+        except (TypeError, ValueError):
+            pass
+
+    interpretation = (
+        parsed.get("interpretation") or f"user wants the {part} part emphasized"
+    )
+    coaching = parsed.get("coaching") if isinstance(parsed.get("coaching"), str) else ""
+    measure_cues = (
+        parsed.get("measure_cues")
+        if isinstance(parsed.get("measure_cues"), str)
+        else ""
+    )
 
     return {
         "part": part,
         "confidence": confidence,
         "interpretation": interpretation,
+        "frequency_range_hz": [round(low, 1), round(high, 1)],
+        "coaching": coaching,
+        "measure_cues": measure_cues,
     }
 
 
@@ -150,7 +184,6 @@ def health():
 
 @app.route("/analyze", methods=["POST"])
 def analyze_request():
-    """send natural language to claude, get structured voice part json back."""
     data = request.get_json(silent=True) or {}
     user_input = data.get("text", "")
 
@@ -162,13 +195,15 @@ def analyze_request():
     if use_rag:
         try:
             rag_context = _rag().query_context(user_input, n_results=5)
+        except RuntimeError:
+            rag_context = None
         except Exception:
             rag_context = None
 
     try:
         message = client.messages.create(
             model=ANTHROPIC_MODEL,
-            max_tokens=300,
+            max_tokens=700,
             system=_analyze_system_prompt(rag_context),
             messages=[{"role": "user", "content": user_input}],
         )
@@ -186,12 +221,18 @@ def analyze_request():
 
 @app.route("/separate", methods=["POST"])
 def separate_audio():
-    """upload an audio file and separate it into stems using demucs."""
+    if os.getenv("DISABLE_DEMUCS") == "1":
+        return jsonify(
+            {
+                "error": "audio separation is disabled on this deployment (use full backend or ecs for demucs)",
+            }
+        ), 503
+
     if "file" not in request.files:
         return jsonify({"error": "no audio file provided"}), 400
 
-    file = request.files["file"]
-    filename = file.filename
+    upload_file = request.files["file"]
+    filename = upload_file.filename
     if not filename:
         return jsonify({"error": "no file selected"}), 400
 
@@ -201,7 +242,7 @@ def separate_audio():
 
     original_ext = Path(filename).suffix or ".wav"
     input_path = job_upload_dir / f"input{original_ext}"
-    file.save(input_path)
+    upload_file.save(input_path)
 
     try:
         result = subprocess.run(
@@ -258,14 +299,78 @@ def separate_audio():
     )
 
 
+@app.route("/emphasize", methods=["POST"])
+def emphasize():
+    """
+    stage 3: band-emphasize the demucs vocals stem for the requested voice part.
+    optional body: frequency_range_hz [low, high] overrides defaults / analyze output.
+    """
+    data = request.get_json(silent=True) or {}
+    job_id = data.get("job_id")
+    part = data.get("part", "vocals")
+    if not job_id:
+        return jsonify({"error": "job_id required"}), 400
+    if not _safe_job_segment(str(job_id)):
+        return jsonify({"error": "invalid job_id"}), 400
+
+    job_dir = output / job_id
+    if not job_dir.exists():
+        return jsonify({"error": "job not found"}), 404
+
+    src = job_dir / "vocals.wav"
+    if not src.exists():
+        return jsonify({"error": "vocals stem not found; run separation first"}), 404
+
+    if part not in VOICE_PARTS:
+        return jsonify({"error": f"part must be one of {sorted(VOICE_PARTS)}"}), 400
+
+    freq_in = data.get("frequency_range_hz")
+    freq_tuple = None
+    if isinstance(freq_in, (list, tuple)) and len(freq_in) == 2:
+        try:
+            freq_tuple = (float(freq_in[0]), float(freq_in[1]))
+        except (TypeError, ValueError):
+            freq_tuple = None
+
+    safe = "".join(c for c in str(part) if c.isalnum() or c in "_-").strip()[:64] or "part"
+    out_stem = f"{safe}_emphasized"
+    dest = job_dir / f"{out_stem}.wav"
+
+    try:
+        meta = audio_emphasis.emphasize_vocals_file(
+            src,
+            dest,
+            part,
+            frequency_range_hz=freq_tuple,
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    available = sorted(
+        p.stem for p in job_dir.glob("*.wav") if p.is_file()
+    )
+
+    return jsonify(
+        {
+            "job_id": job_id,
+            "part": part,
+            "stems": available,
+            "emphasized": out_stem,
+            "dsp": meta,
+            "note": "Register-focused EQ on the vocals stem (band-pass DSP): boosts the analyzed pitch range so a section pops in headphones; not stem-perfect isolation - original vocals.wav unchanged.",
+        }
+    )
+
+
 @app.route("/stems/<job_id>/<stem>", methods=["GET"])
 def get_stem(job_id, stem):
-    """download an individual separated stem."""
-    if stem not in stem_names:
-        return jsonify({"error": f"invalid stem: {stem}"}), 400
+    if not _safe_job_segment(job_id):
+        return jsonify({"error": "invalid job_id"}), 400
+    if ".." in stem or "/" in stem or "\\" in stem:
+        return jsonify({"error": "invalid stem"}), 400
 
     stem_path = output / job_id / f"{stem}.wav"
-    if not stem_path.exists():
+    if not stem_path.is_file():
         return jsonify({"error": "stem not found"}), 404
 
     return send_file(stem_path, mimetype="audio/wav", as_attachment=True)
@@ -273,14 +378,15 @@ def get_stem(job_id, stem):
 
 @app.route("/jobs/<job_id>", methods=["GET"])
 def job_status(job_id):
-    """check what stems are available for a completed job."""
+    if not _safe_job_segment(job_id):
+        return jsonify({"error": "invalid job_id"}), 400
     job_dir = output / job_id
     if not job_dir.exists():
         return jsonify({"error": "job not found"}), 404
 
-    available_stems = [
-        s for s in stem_names if (job_dir / f"{s}.wav").exists()
-    ]
+    available_stems = sorted(
+        p.stem for p in job_dir.glob("*.wav") if p.is_file()
+    )
 
     return jsonify(
         {
@@ -293,10 +399,20 @@ def job_status(job_id):
     )
 
 
+def _rag_not_installed_response():
+    return jsonify(
+        {
+            "error": "RAG is not installed (rag_service missing); pip install chromadb sentence-transformers pypdf or remove use_rag"
+        }
+    ), 503
+
+
 @app.route("/rag/stats", methods=["GET"])
 def rag_stats():
     try:
         n = _rag().collection_count()
+    except RuntimeError:
+        return _rag_not_installed_response()
     except Exception as e:
         return jsonify({"error": str(e), "documents": 0}), 500
     return jsonify({"documents": n})
@@ -304,13 +420,17 @@ def rag_stats():
 
 @app.route("/rag/ingest", methods=["POST"])
 def rag_ingest():
-    """upload pdf, markdown, or plain text into the local vector store."""
+    try:
+        _rag()
+    except RuntimeError:
+        return _rag_not_installed_response()
+
     src = request.form.get("source") or "upload"
 
     if "file" in request.files and request.files["file"].filename:
-        f = request.files["file"]
-        name = f.filename or "upload"
-        raw = f.read()
+        ingest = request.files["file"]
+        name = ingest.filename or "upload"
+        raw = ingest.read()
         lower = name.lower()
         try:
             if lower.endswith(".pdf"):
@@ -335,7 +455,11 @@ def rag_ingest():
 
 @app.route("/rag/query", methods=["POST"])
 def rag_query_debug():
-    """return raw retrieved chunks (for debugging the knowledge base)."""
+    try:
+        _rag()
+    except RuntimeError:
+        return _rag_not_installed_response()
+
     data = request.get_json(silent=True) or {}
     q = data.get("text", "")
     if not q:
@@ -349,11 +473,12 @@ def rag_query_debug():
 
 @app.route("/rag/reset", methods=["POST"])
 def rag_reset():
-    """dev-only: wipe the embedded knowledge store."""
     if os.getenv("ALLOW_RAG_RESET") != "1":
         return jsonify({"error": "set ALLOW_RAG_RESET=1 to confirm"}), 403
     try:
         _rag().reset_knowledge_base()
+    except RuntimeError:
+        return _rag_not_installed_response()
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"status": "ok"})

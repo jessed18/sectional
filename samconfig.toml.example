@@ -1,0 +1,10 @@
+# copy to samconfig.toml and run: sam deploy --guided
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "sectional-api"
+resolve_s3 = true
+s3_prefix = "sectional-api"
+region = "us-west-2"
+capabilities = "CAPABILITY_IAM"
+image_repositories = ["SectionalFunction=YOUR_ECR_URI_HERE"]

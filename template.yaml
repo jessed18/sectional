@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: sectional flask api (claude analyze + RAG) on lambda container - demucs disabled
+
+Parameters:
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Description: anthropic api key (prefer secrets manager in production)
+
+Globals:
+  Function:
+    Timeout: 120
+    MemorySize: 3008
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - '*'
+        AllowOrigins:
+          - '*'
+
+  SectionalFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          ANTHROPIC_MODEL: claude-sonnet-4-6
+          DISABLE_DEMUCS: '1'
+          CHROMA_PERSIST_DIR: /tmp/chroma
+          ALLOW_RAG_RESET: '0'
+      Events:
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: ANY
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /
+            Method: ANY
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: ./backend
+      DockerTag: sectional-api
+
+Outputs:
+  HttpApiId:
+    Description: api gateway http api id
+    Value: !Ref HttpApi
+  ApiUrlHint:
+    Description: base url pattern (replace API_ID)
+    Value: !Sub 'https://API_ID.execute-api.${AWS::Region}.amazonaws.com'

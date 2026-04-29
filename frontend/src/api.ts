@@ -7,6 +7,22 @@ export type AnalyzeResponse = {
   part: string;
   confidence: number;
   interpretation: string;
+  frequency_range_hz: [number, number];
+  coaching: string;
+  measure_cues: string;
+};
+
+export type EmphasizeResponse = {
+  job_id: string;
+  part: string;
+  stems: string[];
+  emphasized: string;
+  dsp?: {
+    source_hz: number;
+    band_hz: [number, number];
+    part: string;
+  };
+  note?: string;
 };
 
 export type SeparateResponse = {
@@ -61,6 +77,23 @@ export async function postSeparate(
 export async function getJob(jobId: string): Promise<JobResponse | ApiError> {
   const res = await fetch(`${prefix}/jobs/${jobId}`);
   return parseJson<JobResponse>(res);
+}
+
+export async function postEmphasize(
+  jobId: string,
+  part: string,
+  frequencyRangeHz?: [number, number]
+): Promise<EmphasizeResponse | ApiError> {
+  const body: Record<string, unknown> = { job_id: jobId, part };
+  if (frequencyRangeHz) {
+    body.frequency_range_hz = frequencyRangeHz;
+  }
+  const res = await fetch(`${prefix}/emphasize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJson<EmphasizeResponse>(res);
 }
 
 export function stemAudioUrl(jobId: string, stem: string): string {

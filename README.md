@@ -1,6 +1,25 @@
 # sectional
 
-full-stack choral audio tool: **react + typescript** frontend, **flask** backend with **claude** for voice-part intent, **demucs** for stems, optional **rag** over rehearsal / sheet-music text.
+full-stack choral audio tool: **react + typescript** frontend, **flask** backend.
+
+**pipeline:** (1) **demucs** → isolated **vocals** vs accompaniment. (2) **claude** `/analyze` → part + **frequency_range_hz** + optional coaching / measure hints; optional **RAG** when `rag_service` is installed. (3) **band emphasis** `POST /emphasize` → processes the **vocals** stem with **scipy** bandpass + blend (heuristic, not perfect isolation).
+
+the **web ui** defaults to a single-column **singer flow** (upload → split → part tips → boost). turn on **developer mode** in the header for the split-panel layout, raw analyze json, RAG toggle, endpoint hints, and local dev footer. engineering detail below is for reviewers and operators.
+
+## architecture (for engineers)
+
+| layer | role |
+| --- | --- |
+| **vite + react** | spa on `:5173`; `/api/*` **proxied** to flask (path rewritten without `/api`) |
+| **flask** | rest api on `:5000`; **cors** enabled for local dev |
+| **demucs** | `POST /separate` runs `python -m demucs` → per-stem wavs under `outputs/<job_id>/` |
+| **anthropic** | `POST /analyze` → structured json (`part`, `frequency_range_hz`, coaching text); model from `ANTHROPIC_MODEL` |
+| **optional RAG** | chroma + embeddings via `rag_service`; `use_rag: true` injects retrieved score text into the system prompt |
+| **dsp** | `POST /emphasize` → **butterworth** band-pass + wet/dry blend in `audio_emphasis.py`; writes `{part}_emphasized.wav` beside `vocals.wav` |
+
+**main routes:** `GET /health` · `POST /separate` · `POST /analyze` · `POST /emphasize` · `GET /stems/<job_id>/<stem>` · `GET /jobs/<job_id>` · `POST /rag/*` (when `rag_service` present).
+
+**deploy split:** full backend (demucs + gpu-friendly) vs **lambda container** (`Dockerfile.lambda`, `requirements-lambda.txt`) for analyze + RAG only; `DISABLE_DEMUCS=1` returns **503** on `/separate`. **sam** template in `template.yaml`.
 
 ## prerequisites
 
@@ -38,12 +57,38 @@ cd frontend && npm run build
 
 serve `frontend/dist` with any static host; point api calls at your deployed backend (set `vite` `base` / env as needed for your host).
 
-## optional rag
+## optional RAG
 
 ingest markdown or pdf via `POST /rag/ingest`, then use **`use_rag: true`** on `POST /analyze`. chroma data lives in `backend/data/chroma` (gitignored).
 
+**cli ingest** (from `backend/` after installing deps):
+
+```bash
+python -m scripts.ingest_knowledge ../knowledge
+```
+
+## aws lambda (analyze + RAG only)
+
+the **lambda** image omits demucs (`requirements-lambda.txt` + `Dockerfile.lambda`). `DISABLE_DEMUCS=1` makes `POST /separate` return **503**.
+
+**build image locally**
+
+```bash
+cd backend
+docker build -f Dockerfile.lambda -t sectional-lambda .
+docker run -p 8080:8080 -e ANTHROPIC_API_KEY=your-key sectional-lambda
+# curl http://127.0.0.1:8080/health
+```
+
+**deploy with sam** (needs docker + aws cli + sam cli): copy `samconfig.toml.example`, run `sam build` then `sam deploy --guided` and paste your **anthropic** key when prompted. first deploy creates an **ecr** repo for the image.
+
+**lambda caveat:** `CHROMA_PERSIST_DIR` defaults to `/tmp/chroma` in the container - the index is **empty on cold start** unless you bake data into the image, attach **efs**, or sync from **s3** on startup (implement that yourself for production).
+
 ## project layout
 
-- `backend/app.py` — flask api
-- `backend/rag_service.py` — vector store + embeddings (loaded on first rag use)
-- `frontend/` — vite + react + typescript
+- `backend/app.py` - flask api
+- `backend/rag_service.py` - vector store + embeddings (loaded on first RAG use)
+- `backend/Dockerfile.lambda` - lambda container (no demucs)
+- `backend/scripts/ingest_knowledge.py` - batch ingest for RAG
+- `template.yaml` - sam template
+- `frontend/` - vite + react + typescript
