@@ -13,6 +13,7 @@ import re
 import threading
 import uuid
 from pathlib import Path
+from typing import Any
 
 import chromadb
 from chromadb.utils import embedding_functions
@@ -23,8 +24,8 @@ _DEFAULT_CHUNK = 1200
 _DEFAULT_OVERLAP = 180
 
 _lock = threading.RLock()
-_client: chromadb.PersistentClient | None = None
-_collection = None
+_client: Any = None
+_collection: Any = None
 
 
 def _persist_dir() -> str:
@@ -46,7 +47,7 @@ def _make_embedding_fn():
     )
 
 
-def _get_client() -> chromadb.PersistentClient:
+def _get_client() -> Any:
     global _client
     with _lock:
         if _client is None:
