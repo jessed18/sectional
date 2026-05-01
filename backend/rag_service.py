@@ -13,9 +13,12 @@ import re
 import threading
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import chromadb
+from chromadb.api import ClientAPI
+from chromadb.api.models.Collection import Collection
+from chromadb.api.types import Metadata
 from chromadb.utils import embedding_functions
 
 COLLECTION_NAME = "sectional_knowledge"
@@ -24,8 +27,8 @@ _DEFAULT_CHUNK = 1200
 _DEFAULT_OVERLAP = 180
 
 _lock = threading.RLock()
-_client: Any = None
-_collection: Any = None
+_client: ClientAPI | None = None
+_collection: Collection | None = None
 
 
 def _persist_dir() -> str:
@@ -47,7 +50,7 @@ def _make_embedding_fn():
     )
 
 
-def _get_client() -> Any:
+def _get_client() -> ClientAPI:
     global _client
     with _lock:
         if _client is None:
@@ -55,14 +58,14 @@ def _get_client() -> Any:
         return _client
 
 
-def _get_collection():
+def _get_collection() -> Collection:
     global _collection
     with _lock:
         if _collection is None:
             client = _get_client()
             _collection = client.get_or_create_collection(
                 name=COLLECTION_NAME,
-                embedding_function=_make_embedding_fn(),
+                embedding_function=cast(Any, _make_embedding_fn()),
                 metadata={"hnsw:space": "cosine"},
             )
         return _collection
@@ -114,7 +117,9 @@ def ingest_plaintext(text: str, source: str) -> int:
         return 0
     coll = _get_collection()
     ids = [str(uuid.uuid4()) for _ in chunks]
-    metadatas = [{"source": str(source), "chunk_index": i} for i in range(len(chunks))]
+    metadatas: list[Metadata] = [
+        {"source": str(source), "chunk_index": i} for i in range(len(chunks))
+    ]
     coll.add(ids=ids, documents=chunks, metadatas=metadatas)
     return len(chunks)
 
@@ -167,6 +172,6 @@ def reset_knowledge_base() -> None:
         _collection = None
         _collection = client.get_or_create_collection(
             name=COLLECTION_NAME,
-            embedding_function=_make_embedding_fn(),
+            embedding_function=cast(Any, _make_embedding_fn()),
             metadata={"hnsw:space": "cosine"},
         )
