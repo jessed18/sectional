@@ -11,10 +11,10 @@ the **web ui** defaults to a single-column **singer flow** (upload → split →
 | layer | role |
 | --- | --- |
 | **vite + react** | spa on `:5173`; `/api/*` **proxied** to flask (path rewritten without `/api`) |
-| **flask** | rest api on `:5000`; **cors** enabled for local dev |
+| **flask** | rest api on `:5000` (Linux/Windows); on **macOS** defaults to `:5001` and remaps `PORT=5000` to avoid AirPlay (set `SECTIONAL_ALLOW_PORT_5000=1` to force `5000`); **cors** enabled for local dev |
 | **demucs** | `POST /separate` runs `python -m demucs` → per-stem wavs under `outputs/<job_id>/` |
 | **anthropic** | `POST /analyze` → structured json (`part`, `frequency_range_hz`, coaching text); model from `ANTHROPIC_MODEL` |
-| **optional RAG** | chroma + embeddings via `rag_service`; `use_rag: true` injects retrieved score text into the system prompt |
+| **optional RAG** | chromadb (persistent) + sentence-transformers via `rag_service`; `use_rag: true` injects retrieved score text into the system prompt |
 | **dsp** | `POST /emphasize` → **butterworth** band-pass + wet/dry blend in `audio_emphasis.py`; writes `{part}_emphasized.wav` beside `vocals.wav` |
 
 **main routes:** `GET /health` · `POST /separate` · `POST /analyze` · `POST /emphasize` · `GET /stems/<job_id>/<stem>` · `GET /jobs/<job_id>` · `POST /rag/*` (when `rag_service` present).
@@ -33,21 +33,22 @@ cd backend
 python3 -m venv venv
 source venv/bin/activate   # windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env       # add ANTHROPIC_API_KEY
-python app.py
+cp .env.example .env       # add ANTHROPIC_API_KEY (PORT=5001 avoids macOS AirPlay on 5000)
+python -u app.py           # -u: line-buffered logs; works from repo root or backend/
 ```
 
-api listens on **http://127.0.0.1:5000**.
+api listens on **http://127.0.0.1:5000** (Linux/Windows) or **:5001** on macOS unless you set `SECTIONAL_ALLOW_PORT_5000=1` with a free **5000**.
 
 ## frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev:all   # api + ui together (needs backend/.venv); use npm run dev if api is already running
+# or: npm run dev   # ui only — run python -u app.py in backend in another terminal
 ```
 
-ui listens on **http://127.0.0.1:5173** and proxies **`/api/*`** to the flask server (strip `/api` prefix). run **both** processes for local development.
+ui listens on **http://127.0.0.1:5173** (or **:5174** if 5173 is busy) and proxies **`/api/*`** to the flask server (strip `/api` prefix). npm scripts must be invoked as **`npm run <script>`**, not `npm <script>`.
 
 production bundle:
 

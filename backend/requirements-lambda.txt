@@ -4,7 +4,7 @@ flask-cors==6.0.2
 Werkzeug==3.1.8
 python-dotenv==1.2.1
 anthropic==0.96.0
-chromadb==0.4.24
+chromadb==1.5.8
 sentence-transformers==3.3.1
 pypdf==5.1.0
 gunicorn==23.0.0

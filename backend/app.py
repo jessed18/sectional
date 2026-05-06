@@ -16,7 +16,9 @@ from flask_cors import CORS
 
 import audio_emphasis
 
+# Cwd .env first, then backend/.env overrides (so PORT/API keys in backend/.env win over shell/cwd).
 load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 _RAG_MISSING = object()
 _rag_service = None
@@ -485,4 +487,60 @@ def rag_reset():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    import socket
+    import sys
+
+    def _can_bind(host: str, p: int, *, family: int = socket.AF_INET) -> bool:
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind((host, p))
+                return True
+            except OSError:
+                return False
+
+    def _flask_port_available(p: int, host: str) -> bool:
+        """True if we expect Flask can listen on host:p (IPv4 + IPv6 loopback on macOS)."""
+        if not _can_bind(host, p, family=socket.AF_INET):
+            return False
+        if sys.platform == "darwin":
+            try:
+                if not _can_bind("::1", p, family=socket.AF_INET6):
+                    return False
+            except OSError:
+                pass
+        return True
+
+    _host = "127.0.0.1"
+    # macOS: AirPlay / Control Center often holds 5000. Shell may still export PORT=5000.
+    if sys.platform == "darwin":
+        _raw = os.environ.get("PORT", "").strip()
+        preferred = int(_raw) if _raw else 5001
+        if preferred == 5000 and os.environ.get("SECTIONAL_ALLOW_PORT_5000") != "1":
+            preferred = 5001
+    else:
+        preferred = int(os.environ.get("PORT", "5000"))
+    listen_port = preferred
+    if not _flask_port_available(preferred, _host):
+        listen_port = None
+        for p in range(preferred + 1, preferred + 20):
+            if _flask_port_available(p, _host):
+                listen_port = p
+                break
+        if listen_port is None:
+            raise RuntimeError(
+                f"no free TCP port in {_host}:{preferred + 1}-{preferred + 19}; "
+                "free one or set PORT in .env"
+            )
+        print(
+            f"\n*** Port {preferred} is in use; listening on {listen_port}.\n"
+            f"*** If the UI cannot reach the API, set VITE_BACKEND_PORT={listen_port} "
+            "in frontend/.env (see frontend/.env.example).\n"
+        )
+
+    print(
+        f"[sectional] http://{_host}:{listen_port}/  (debug, reloader off)\n",
+        flush=True,
+    )
+    # use_reloader=False avoids extra bind / "Address already in use" on macOS with debug=True
+    app.run(debug=True, host=_host, port=listen_port, use_reloader=False)
