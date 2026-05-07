@@ -62,11 +62,17 @@ serve `frontend/dist` with any static host; point api calls at your deployed bac
 
 ingest markdown or pdf via `POST /rag/ingest`, then use **`use_rag: true`** on `POST /analyze`. chroma data lives in `backend/data/chroma` (gitignored).
 
+keep choir docs under `knowledge/` (recommended: `knowledge/scores/` for service PDFs and rehearsal packets, `knowledge/user_piece_test/` for quick local experiments).
+
 **cli ingest** (from `backend/` after installing deps):
 
 ```bash
 python -m scripts.ingest_knowledge ../knowledge
+# or target score packets only
+python -m scripts.ingest_knowledge ../knowledge/scores --prefix choir_scores
 ```
+
+**pdf note:** text-based exports from notation tools ingest well; scanned/image-only pdfs usually need OCR first.
 
 ## aws lambda (analyze + RAG only)
 
