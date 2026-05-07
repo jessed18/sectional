@@ -14,7 +14,6 @@ import {
 import "./App.css";
 
 const STORAGE_DEV = "sectional-developer-mode";
-const STORAGE_SAMPLE_INGEST = "sectional-sample-score-ingested-v1";
 const SAMPLE_SCORE_PATH = "/samples/have-yourself-a-merry-little-christmas.pdf";
 const SAMPLE_SCORE_NAME = "Have Yourself a Merry Little Christmas.pdf";
 
@@ -164,14 +163,7 @@ export default function App() {
       const sampleFile = new File([blob], SAMPLE_SCORE_NAME, {
         type: "application/pdf",
       });
-      const ingested = await ingestScoreFile(sampleFile, "sample-score");
-      if (ingested) {
-        try {
-          localStorage.setItem(STORAGE_SAMPLE_INGEST, "1");
-        } catch {
-          /* ignore */
-        }
-      }
+      await ingestScoreFile(sampleFile, "sample-score");
     } catch (e) {
       setRagIngestErr(
         e instanceof Error ? e.message : "failed to load built-in sample score"
@@ -186,24 +178,6 @@ export default function App() {
     }
     await ingestScoreFile(scoreFile, "user-upload");
   }
-
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      if (!apiOk) return;
-      try {
-        if (localStorage.getItem(STORAGE_SAMPLE_INGEST) === "1") return;
-      } catch {
-        /* ignore */
-      }
-      if (cancelled) return;
-      await onUseSampleScore();
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [apiOk]);
 
   async function onAnalyze(e: React.FormEvent) {
     e.preventDefault();

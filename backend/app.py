@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from pathlib import Path
 
@@ -115,6 +116,29 @@ def _analyze_system_prompt(rag_context: str | None) -> str:
     )
 
 
+def _query_rag_context_with_timeout(
+    user_input: str, *, n_results: int, timeout_s: float
+) -> str | None:
+    """
+    Best-effort RAG lookup that never blocks request handling for long.
+    If RAG is slow/unavailable, return None and continue with base prompt.
+    """
+    holder: dict[str, str | None] = {"ctx": None}
+
+    def _worker() -> None:
+        try:
+            holder["ctx"] = _rag().query_context(user_input, n_results=n_results)
+        except Exception:
+            holder["ctx"] = None
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout_s)
+    if t.is_alive():
+        return None
+    return holder["ctx"]
+
+
 def _first_text_block(message) -> str:
     for block in message.content:
         if getattr(block, "type", None) == "text":
@@ -200,12 +224,11 @@ def analyze_request():
     use_rag = bool(data.get("use_rag"))
     rag_context = None
     if use_rag:
-        try:
-            rag_context = _rag().query_context(user_input, n_results=5)
-        except RuntimeError:
-            rag_context = None
-        except Exception:
-            rag_context = None
+        rag_timeout_s = float(os.getenv("RAG_QUERY_TIMEOUT_SECONDS", "2.5"))
+        rag_n_results = int(os.getenv("RAG_QUERY_N_RESULTS", "3"))
+        rag_context = _query_rag_context_with_timeout(
+            user_input, n_results=rag_n_results, timeout_s=rag_timeout_s
+        )
 
     try:
         message = client.messages.create(
