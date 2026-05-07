@@ -100,6 +100,22 @@ export async function postEmphasize(
   return parseJson<EmphasizeResponse>(res);
 }
 
+export type RagIngestResponse = { chunks_added: number; source: string };
+
+export async function postRagIngestFile(
+  file: File,
+  source: string
+): Promise<RagIngestResponse | ApiError> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("source", source);
+  const res = await fetch(`${prefix}/rag/ingest`, {
+    method: "POST",
+    body: fd,
+  });
+  return parseJson<RagIngestResponse>(res);
+}
+
 export function stemAudioUrl(jobId: string, stem: string): string {
   return `${prefix}/stems/${jobId}/${stem}`;
 }

@@ -5,6 +5,7 @@ import {
   isApiError,
   postAnalyze,
   postEmphasize,
+  postRagIngestFile,
   postSeparate,
   stemAudioUrl,
   type AnalyzeResponse,
@@ -13,6 +14,9 @@ import {
 import "./App.css";
 
 const STORAGE_DEV = "sectional-developer-mode";
+const STORAGE_SAMPLE_INGEST = "sectional-sample-score-ingested-v1";
+const SAMPLE_SCORE_PATH = "/samples/have-yourself-a-merry-little-christmas.pdf";
+const SAMPLE_SCORE_NAME = "Have Yourself a Merry Little Christmas.pdf";
 
 const TAGLINE_SINGER =
   "\u266a hear your line more clearly: upload your rehearsal recording, pull the singers away from the piano, get simple tips for your part, then gently bring your section forward in the mix.";
@@ -117,6 +121,10 @@ export default function App() {
 
   const [emphLoading, setEmphLoading] = useState(false);
   const [emphErr, setEmphErr] = useState<string | null>(null);
+  const [ragIngestMsg, setRagIngestMsg] = useState<string | null>(null);
+  const [ragIngestErr, setRagIngestErr] = useState<string | null>(null);
+  const [ragIngestLoading, setRagIngestLoading] = useState(false);
+  const [scoreFile, setScoreFile] = useState<File | null>(null);
 
   const ping = useCallback(async () => {
     const h = await getHealth();
@@ -128,6 +136,74 @@ export default function App() {
     const t = setInterval(() => void ping(), 15000);
     return () => clearInterval(t);
   }, [ping]);
+
+  async function ingestScoreFile(fileToIngest: File, source: string) {
+    setRagIngestErr(null);
+    setRagIngestLoading(true);
+    const res = await postRagIngestFile(fileToIngest, source);
+    setRagIngestLoading(false);
+    if (isApiError(res)) {
+      setRagIngestErr(res.error);
+      return null;
+    }
+    const okRes = res;
+    setUseRag(true);
+    setRagIngestMsg(
+      `score ready: added ${okRes.chunks_added} chunk${okRes.chunks_added === 1 ? "" : "s"} from ${okRes.source}`
+    );
+    return okRes;
+  }
+
+  async function onUseSampleScore() {
+    try {
+      const r = await fetch(SAMPLE_SCORE_PATH);
+      if (!r.ok) {
+        throw new Error(`sample fetch failed (${r.status})`);
+      }
+      const blob = await r.blob();
+      const sampleFile = new File([blob], SAMPLE_SCORE_NAME, {
+        type: "application/pdf",
+      });
+      const ingested = await ingestScoreFile(sampleFile, "sample-score");
+      if (ingested) {
+        try {
+          localStorage.setItem(STORAGE_SAMPLE_INGEST, "1");
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (e) {
+      setRagIngestErr(
+        e instanceof Error ? e.message : "failed to load built-in sample score"
+      );
+    }
+  }
+
+  async function onUploadOwnScore() {
+    if (!scoreFile) {
+      setRagIngestErr("pick a score file first (.pdf, .md, .txt).");
+      return;
+    }
+    await ingestScoreFile(scoreFile, "user-upload");
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!apiOk) return;
+      try {
+        if (localStorage.getItem(STORAGE_SAMPLE_INGEST) === "1") return;
+      } catch {
+        /* ignore */
+      }
+      if (cancelled) return;
+      await onUseSampleScore();
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiOk]);
 
   async function onAnalyze(e: React.FormEvent) {
     e.preventDefault();
@@ -203,7 +279,7 @@ export default function App() {
   const uploadBlock = (id: string) => (
     <div className="form">
       <label className="label" htmlFor={id}>
-        your recording
+        your recording (optional)
       </label>
       <input
         id={id}
@@ -219,8 +295,8 @@ export default function App() {
       ) : (
         <p className="file-picked muted">
           {developerMode
-            ? "no file yet - needed for split & eq"
-            : "choose a file to begin"}
+            ? "no file yet - only needed for split & eq"
+            : "no recording selected - optional unless you want split/eq"}
         </p>
       )}
     </div>
@@ -307,6 +383,67 @@ export default function App() {
                   />
                   use ingested score / notes (RAG)
                 </label>
+                <div className="score-tools">
+                  <p className="score-tools-label">choose your score source (optional)</p>
+                  <p className="flow-step-desc score-tools-desc">
+                    default sample is <strong>{SAMPLE_SCORE_NAME}</strong> (free to use),
+                    or upload your own sheet music. no recording required for this mode.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={ragIngestLoading}
+                    onClick={() => void onUseSampleScore()}
+                  >
+                    {ragIngestLoading
+                      ? "loading sample…"
+                      : `use default sample: ${SAMPLE_SCORE_NAME}`}
+                  </button>
+                  <a
+                    className="score-tools-link"
+                    href={SAMPLE_SCORE_PATH}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    preview default sample pdf
+                  </a>
+                  <details className="sample-preview" open>
+                    <summary>preview: {SAMPLE_SCORE_NAME}</summary>
+                    <object
+                      className="sample-preview-frame"
+                      data={SAMPLE_SCORE_PATH}
+                      type="application/pdf"
+                    >
+                      <p className="flow-step-desc">
+                        pdf preview unavailable in this browser.{" "}
+                        <a href={SAMPLE_SCORE_PATH} target="_blank" rel="noreferrer">
+                          open sample score
+                        </a>
+                        .
+                      </p>
+                    </object>
+                  </details>
+                  <label className="label" htmlFor="score-upload-dev">
+                    or upload your own score
+                  </label>
+                  <input
+                    id="score-upload-dev"
+                    type="file"
+                    accept=".pdf,.md,.txt,text/plain,application/pdf"
+                    className="file"
+                    onChange={(e) => setScoreFile(e.target.files?.[0] ?? null)}
+                  />
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={ragIngestLoading || !scoreFile}
+                    onClick={() => void onUploadOwnScore()}
+                  >
+                    ingest uploaded score
+                  </button>
+                </div>
+                {ragIngestMsg && <p className="ok-msg">{ragIngestMsg}</p>}
+                {ragIngestErr && <p className="err">{ragIngestErr}</p>}
                 <button type="submit" className="btn primary" disabled={analyzeLoading}>
                   {analyzeLoading ? "…" : "analyze"}
                 </button>
@@ -327,7 +464,8 @@ export default function App() {
             <section className="card">
               <h2 className="card-title">split the mix</h2>
               <p className="card-desc card-desc-tight">
-                same upload as <strong>your part</strong> - get layers like{" "}
+                optional audio path: same upload as <strong>your part</strong> - get
+                layers like{" "}
                 <strong>vocals</strong> vs backing.
               </p>
               <details className="extra extra-inline">
@@ -353,9 +491,16 @@ export default function App() {
                     selected: <strong>{file.name}</strong>
                   </p>
                 )}
-                <button type="submit" className="btn primary" disabled={sepLoading}>
+                <button
+                  type="submit"
+                  className="btn primary"
+                  disabled={sepLoading || !file}
+                >
                   {sepLoading ? "…" : "separate"}
                 </button>
+                {!file ? (
+                  <p className="flow-step-desc">optional: add audio only for split/eq.</p>
+                ) : null}
               </form>
               {sepErr && <p className="err">{sepErr}</p>}
               {sepResult && (
@@ -422,14 +567,14 @@ export default function App() {
           <section className="card card-singer-flow">
             <h2 className="card-title">rehearsal helper</h2>
             <p className="card-desc card-desc-tight singer-intro">
-              work top to bottom. you can <strong>split</strong> and{" "}
-              <strong>get tips</strong> in either order, then <strong>boost your part</strong>{" "}
-              when both are done.
+              choose your path: <strong>sheet music only</strong> (step 3) or full audio
+              path (steps 1-4). split + EQ need a recording; part tips can run from score
+              context alone.
             </p>
 
             <div className="flow-step flow-step-first">
               <h3 className="flow-step-title">
-                <span className="flow-step-num">1</span> your recording
+                <span className="flow-step-num">1</span> your recording (optional)
               </h3>
               {uploadBlock("audio-singer")}
             </div>
@@ -437,15 +582,25 @@ export default function App() {
             <div className="flow-step">
               <h3 className="flow-step-title">
                 <span className="flow-step-num">2</span> split singers from the accompaniment
+                (optional)
               </h3>
               <p className="flow-step-desc">
-                separates an “all singers” track from piano, organ, or backing - so you
-                can focus on the choir.
+                optional audio path: separates an “all singers” track from piano, organ,
+                or backing - so you can focus on the choir.
               </p>
               <form onSubmit={onSeparate} className="form flow-step-form">
-                <button type="submit" className="btn primary" disabled={sepLoading}>
+                <button
+                  type="submit"
+                  className="btn primary"
+                  disabled={sepLoading || !file}
+                >
                   {sepLoading ? "working…" : "split recording"}
                 </button>
+                {!file ? (
+                  <p className="flow-step-desc">
+                    skip this if you only want score-based part tips.
+                  </p>
+                ) : null}
               </form>
               {sepErr && <p className="err">{sepErr}</p>}
               {sepResult && (
@@ -476,6 +631,7 @@ export default function App() {
               </h3>
               <p className="flow-step-desc">
                 tap your section or write in your own words, then get plain-language tips.
+                this works even if you only upload sheet music and no recording.
               </p>
               <div className="part-grid" role="group" aria-label="Voice sections">
                 {PART_QUICK_LINES.map(({ label, line }) => (
@@ -505,6 +661,69 @@ export default function App() {
                   {analyzeLoading ? "working…" : "get tips for my part"}
                 </button>
               </form>
+              <div className="score-tools">
+                <p className="score-tools-label">choose your score source (optional)</p>
+                <p className="flow-step-desc score-tools-desc">
+                  default sample is <strong>{SAMPLE_SCORE_NAME}</strong> (free to use), or
+                  upload your own sheet music.
+                </p>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={ragIngestLoading}
+                  onClick={() => void onUseSampleScore()}
+                >
+                  {ragIngestLoading
+                    ? "loading sample…"
+                    : `use default sample: ${SAMPLE_SCORE_NAME}`}
+                </button>
+                <a
+                  className="score-tools-link"
+                  href={SAMPLE_SCORE_PATH}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  preview default sample pdf
+                </a>
+                <details className="sample-preview" open>
+                  <summary>preview: {SAMPLE_SCORE_NAME}</summary>
+                  <object
+                    className="sample-preview-frame"
+                    data={SAMPLE_SCORE_PATH}
+                    type="application/pdf"
+                  >
+                    <p className="flow-step-desc">
+                      pdf preview unavailable in this browser.{" "}
+                      <a href={SAMPLE_SCORE_PATH} target="_blank" rel="noreferrer">
+                        open sample score
+                      </a>
+                      .
+                    </p>
+                  </object>
+                </details>
+                <div className="form form-compact">
+                  <label className="label" htmlFor="score-upload-singer">
+                    upload your own sheet music
+                  </label>
+                  <input
+                    id="score-upload-singer"
+                    type="file"
+                    accept=".pdf,.md,.txt,text/plain,application/pdf"
+                    className="file"
+                    onChange={(e) => setScoreFile(e.target.files?.[0] ?? null)}
+                  />
+                  <button
+                    className="btn"
+                    type="button"
+                    disabled={ragIngestLoading || !scoreFile}
+                    onClick={() => void onUploadOwnScore()}
+                  >
+                    ingest score
+                  </button>
+                </div>
+                {ragIngestMsg && <p className="ok-msg">{ragIngestMsg}</p>}
+                {ragIngestErr && <p className="err">{ragIngestErr}</p>}
+              </div>
               {analyzeErr && <p className="err">{analyzeErr}</p>}
               {analyzeResult ? <SingerSummary result={analyzeResult} /> : null}
             </div>
@@ -512,6 +731,7 @@ export default function App() {
             <div className="flow-step flow-step-last">
               <h3 className="flow-step-title">
                 <span className="flow-step-num">4</span> make my part a little louder
+                (optional)
               </h3>
               <p className="flow-step-desc">
                 gentle tone shaping on the singers’ track - not a perfect solo, but

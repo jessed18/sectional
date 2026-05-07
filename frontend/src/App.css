@@ -146,6 +146,69 @@
   font-weight: 600;
 }
 
+.score-tools {
+  margin-top: 0.25rem;
+  padding: 0.8rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.score-tools-desc {
+  margin: 0;
+}
+
+.score-tools-label {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.score-tools-link {
+  font-size: 0.82rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.score-tools-link:hover {
+  text-decoration: underline;
+}
+
+.sample-preview {
+  margin-top: 0.25rem;
+}
+
+.sample-preview summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sample-preview-frame {
+  width: 100%;
+  height: 300px;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.form-compact {
+  gap: 0.45rem;
+}
+
+.ok-msg {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--accent);
+}
+
 .header-actions {
   display: flex;
   align-items: center;
