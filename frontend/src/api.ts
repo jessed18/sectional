@@ -1,5 +1,9 @@
-/** proxied to flask via vite (`/api` -> `http://127.0.0.1:5000`) */
-const prefix = "/api";
+/**
+ * Local dev: Vite proxies `/api/*` -> Flask (see `vite.config.ts`).
+ * Production: set `VITE_API_ORIGIN` at build time, e.g. `https://sectional-api.onrender.com`
+ * (no trailing slash). Requests go to `https://.../health`, not `/api/health`.
+ */
+const prefix = (import.meta.env.VITE_API_ORIGIN || "").replace(/\/$/, "") || "/api";
 
 export type HealthResponse = { status: string };
 

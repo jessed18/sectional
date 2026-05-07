@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
+      // Cloudflare quick tunnels (*.trycloudflare.com) hit Vite via public Host header
+      allowedHosts: [".trycloudflare.com"],
       proxy: {
         "/api": {
           target: `http://127.0.0.1:${backendPort}`,

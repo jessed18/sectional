@@ -13,4 +13,3 @@
 ## balance / blend
 
 - on the **“Gloria”** section (rehearsal **C**), sopranos and mezzos are marked *divisi* - in practice recordings, the high line often reads as “soprano” and the lower split as “mezzo or alto 2.”
-
