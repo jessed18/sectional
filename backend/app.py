@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import uuid
+from functools import lru_cache
 from pathlib import Path
 
 from anthropic import Anthropic
@@ -116,6 +117,44 @@ def _analyze_system_prompt(rag_context: str | None) -> str:
     )
 
 
+@lru_cache(maxsize=1)
+def _sample_score_chunks() -> list[str]:
+    p = (
+        Path(__file__).resolve().parent
+        / "sample_scores"
+        / "have_yourself_a_merry_little_christmas.txt"
+    )
+    if not p.exists():
+        return []
+    text = p.read_text(encoding="utf-8", errors="replace")
+    raw_parts = re.split(r"\n\s*\n+", text)
+    return [x.strip() for x in raw_parts if x.strip()]
+
+
+def _tokenize(s: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", s.lower()))
+
+
+def _sample_score_context(query: str, max_chunks: int = 4) -> str | None:
+    chunks = _sample_score_chunks()
+    if not chunks:
+        return None
+    qtok = _tokenize(query)
+    if not qtok:
+        return None
+    scored: list[tuple[int, str]] = []
+    for c in chunks:
+        ctok = _tokenize(c)
+        overlap = len(qtok.intersection(ctok))
+        if overlap > 0:
+            scored.append((overlap, c))
+    if not scored:
+        return None
+    scored.sort(key=lambda t: t[0], reverse=True)
+    top = [c for _, c in scored[:max_chunks]]
+    return "\n\n".join(top)
+
+
 def _query_rag_context_with_timeout(
     user_input: str, *, n_results: int, timeout_s: float
 ) -> str | None:
@@ -222,13 +261,18 @@ def analyze_request():
         return jsonify({"error": "no text provided"}), 400
 
     use_rag = bool(data.get("use_rag"))
+    use_sample_score = bool(data.get("use_sample_score"))
     rag_context = None
+    if use_sample_score:
+        rag_context = _sample_score_context(user_input)
     if use_rag:
         rag_timeout_s = float(os.getenv("RAG_QUERY_TIMEOUT_SECONDS", "2.5"))
         rag_n_results = int(os.getenv("RAG_QUERY_N_RESULTS", "3"))
-        rag_context = _query_rag_context_with_timeout(
+        rag_ctx = _query_rag_context_with_timeout(
             user_input, n_results=rag_n_results, timeout_s=rag_timeout_s
         )
+        if rag_ctx:
+            rag_context = f"{rag_context}\n\n{rag_ctx}" if rag_context else rag_ctx
 
     try:
         message = client.messages.create(

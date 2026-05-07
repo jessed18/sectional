@@ -107,6 +107,7 @@ export default function App() {
 
   const [analyzeText, setAnalyzeText] = useState(PART_QUICK_LINES[0].line);
   const [useRag, setUseRag] = useState(false);
+  const [useSampleScore, setUseSampleScore] = useState(false);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResponse | null>(
     null
@@ -147,6 +148,7 @@ export default function App() {
     }
     const okRes = res;
     setUseRag(true);
+    setUseSampleScore(false);
     setRagIngestMsg(
       `score ready: added ${okRes.chunks_added} chunk${okRes.chunks_added === 1 ? "" : "s"} from ${okRes.source}`
     );
@@ -154,21 +156,12 @@ export default function App() {
   }
 
   async function onUseSampleScore() {
-    try {
-      const r = await fetch(SAMPLE_SCORE_PATH);
-      if (!r.ok) {
-        throw new Error(`sample fetch failed (${r.status})`);
-      }
-      const blob = await r.blob();
-      const sampleFile = new File([blob], SAMPLE_SCORE_NAME, {
-        type: "application/pdf",
-      });
-      await ingestScoreFile(sampleFile, "sample-score");
-    } catch (e) {
-      setRagIngestErr(
-        e instanceof Error ? e.message : "failed to load built-in sample score"
-      );
-    }
+    setRagIngestErr(null);
+    setUseSampleScore(true);
+    setUseRag(false);
+    setRagIngestMsg(
+      `using built-in sample context from ${SAMPLE_SCORE_NAME} (fast mode)`
+    );
   }
 
   async function onUploadOwnScore() {
@@ -184,7 +177,7 @@ export default function App() {
     setAnalyzeErr(null);
     setAnalyzeResult(null);
     setAnalyzeLoading(true);
-    const res = await postAnalyze(analyzeText.trim(), useRag);
+    const res = await postAnalyze(analyzeText.trim(), useRag, useSampleScore);
     setAnalyzeLoading(false);
     if (isApiError(res)) {
       setAnalyzeErr(res.error);

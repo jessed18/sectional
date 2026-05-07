@@ -56,12 +56,17 @@ export async function getHealth(): Promise<HealthResponse | ApiError> {
 
 export async function postAnalyze(
   text: string,
-  useRag: boolean
+  useRag: boolean,
+  useSampleScore: boolean
 ): Promise<AnalyzeResponse | ApiError> {
   const res = await fetch(`${prefix}/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, use_rag: useRag }),
+    body: JSON.stringify({
+      text,
+      use_rag: useRag,
+      use_sample_score: useSampleScore,
+    }),
   });
   return parseJson<AnalyzeResponse>(res);
 }
