@@ -5,12 +5,13 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const defaultBackendPort = process.platform === "darwin" ? "5001" : "5000";
   const backendPort = env.VITE_BACKEND_PORT || defaultBackendPort;
+  const base = env.VITE_BASE_PATH || "/";
 
   return {
+    base,
     plugins: [react()],
     server: {
       port: 5173,
-      // Cloudflare quick tunnels (*.trycloudflare.com) hit Vite via public Host header
       allowedHosts: [".trycloudflare.com"],
       proxy: {
         "/api": {
