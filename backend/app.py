@@ -184,6 +184,11 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"status": "ok", "service": "sectional-api"})
+
+
 @app.route("/analyze", methods=["POST"])
 def analyze_request():
     data = request.get_json(silent=True) or {}
