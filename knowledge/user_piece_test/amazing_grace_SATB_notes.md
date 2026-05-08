@@ -13,4 +13,3 @@ fantasy choral arrangement used only to test RAG retrieval. adjust names if your
 
 - “where do **tenors** come in?” → tie to **letter A**, **before m. 18** inner-line behavior.
 - “what should **altos** do at twelve?” → **m. 12** long-note vowel blend.
-
