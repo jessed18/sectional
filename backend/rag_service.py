@@ -161,6 +161,63 @@ def query_context(query: str, n_results: int = 5) -> str:
     return "\n\n".join(lines) if lines else ""
 
 
+def _lex_tokenize(s: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", (s or "").lower()))
+
+
+def query_context_lexical(query: str, n_results: int = 5) -> str:
+    """
+    Same chunks as embedding RAG, but retrieval is token-overlap only (no encode / vector search).
+    Use with instant analyze when use_rag is true — keeps latency low on small/medium corpora.
+    """
+    q = (query or "").strip()
+    if not q:
+        return ""
+
+    coll = _get_collection()
+    n = coll.count()
+    if n == 0:
+        return ""
+
+    qtok = _lex_tokenize(q)
+    if not qtok:
+        return ""
+
+    try:
+        max_scan = int(os.getenv("RAG_LEXICAL_MAX_CHUNKS", "2500"))
+    except ValueError:
+        max_scan = 2500
+    max_scan = max(1, min(max_scan, n))
+    k_out = max(1, min(int(n_results), max_scan))
+
+    scored: list[tuple[int, str]] = []
+    offset = 0
+    batch = 400
+    while offset < max_scan:
+        take = min(batch, max_scan - offset)
+        res = coll.get(include=["documents"], limit=take, offset=offset)
+        docs = res.get("documents") or []
+        if not docs:
+            break
+        for d in docs:
+            if not d:
+                continue
+            text = str(d).strip()
+            if not text:
+                continue
+            overlap = len(qtok & _lex_tokenize(text))
+            if overlap > 0:
+                scored.append((overlap, text))
+        offset += len(docs)
+        if len(docs) < take:
+            break
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    top = [t[1] for t in scored[:k_out]]
+    lines = [f"[{i + 1}] {d}" for i, d in enumerate(top)]
+    return "\n\n".join(lines) if lines else ""
+
+
 def reset_knowledge_base() -> None:
     global _collection
     with _lock:

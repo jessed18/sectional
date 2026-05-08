@@ -135,7 +135,7 @@ def _tokenize(s: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", s.lower()))
 
 
-def _sample_score_context(query: str, max_chunks: int = 4) -> str | None:
+def _sample_score_context(query: str, max_chunks: int = 6) -> str | None:
     chunks = _sample_score_chunks()
     if not chunks:
         return None
@@ -242,6 +242,158 @@ def _normalize_analyze_response(parsed: dict) -> dict:
     }
 
 
+_PART_DETECT_RE: list[tuple[str, str]] = [
+    (r"mezzo[\s-]?soprano", "mezzo"),
+    (r"second\s+soprano", "mezzo"),
+    (r"\bmezzo\b", "mezzo"),
+    (r"\bbaritone\b|\bbari\b", "baritone"),
+    (r"\bsoprano\b|\bsop\b", "soprano"),
+    (r"\balto\b", "alto"),
+    (r"\btenor\b", "tenor"),
+    (r"\bbass\b", "bass"),
+    (
+        r"\ball\s+voices\b|\beveryone\b|\bfull\s+choir\b|\bwhole\s+choir\b|"
+        r"\bmixed\s+choir\b|\bno\s+single\s+part\b|\ball\s+together\b",
+        "vocals",
+    ),
+    (r"\b(high\s+women|top\s+line|upper\s+voices)\b", "soprano"),
+    (r"\b(low\s+voices|bottom\s+line|low\s+part)\b", "bass"),
+]
+
+
+_INSTANT_COACHING: dict[str, str] = {
+    "soprano": (
+        "Lean toward tall vowels and steady airflow on sustained tones; keep entrances "
+        "clean without scooping from below."
+    ),
+    "alto": (
+        "Anchor vowels with aligned color across the section; watch blending when "
+        "doubling or harmonizing under sopranos."
+    ),
+    "mezzo": (
+        "Sit comfortably between soprano and alto colours; phrase so bridges across "
+        "breaks stay smooth, not pushed."
+    ),
+    "tenor": (
+        "Brighten gently without nasality; lock rhythmic pickups so male-stack rhythms "
+        "stay crisp against piano."
+    ),
+    "baritone": (
+        "Support low mids without dragging tempo; keep consonants clear when buried "
+        "between tenor and bass."
+    ),
+    "bass": (
+        "Prioritize rhythmic solidity and unison tuning on roots; avoid over-darkening "
+        "vowels that muddy the blend."
+    ),
+    "vocals": (
+        "Listen for sectional balance first; pick one line to track each pass-through so "
+        "harmonies unpack mentally."
+    ),
+}
+
+
+def _detect_voice_part(user_input: str) -> tuple[str, float]:
+    low = user_input.lower()
+    for pattern, part in _PART_DETECT_RE:
+        if re.search(pattern, low):
+            return part, 0.88
+    return "vocals", 0.55
+
+
+_BUNDLED_SAMPLE_TITLE = "Have Yourself a Merry Little Christmas"
+
+
+def _instant_analyze_payload(
+    user_input: str,
+    rag_context: str | None,
+    *,
+    bundled_sample: bool,
+    ingested_score: bool,
+) -> dict:
+    part, confidence = _detect_voice_part(user_input)
+    low_hz, high_hz = audio_emphasis.PART_BANDS_HZ.get(
+        part, audio_emphasis.PART_BANDS_HZ["vocals"]
+    )
+    coaching_base = _INSTANT_COACHING.get(part, _INSTANT_COACHING["vocals"])
+
+    if rag_context:
+        excerpt_full = " ".join(rag_context.split())
+        excerpt = excerpt_full[:520].rsplit(" ", 1)[0] + (
+            " …" if len(excerpt_full) > 520 else ""
+        )
+        coaching = (
+            f"Singing this as {part}: line up stressed syllables with the rhythm shown in the score text "
+            f"below; keep vowels consistent through sustained tones and phrase endings. {coaching_base} "
+            "Use the excerpt for entrances, breaths, and where you sit in the harmony."
+        )
+        if ingested_score:
+            interpretation = (
+                "We're coaching your "
+                + part
+                + " line against your uploaded PDF — match your typed lyric "
+                "to words in the excerpt when you can."
+            )
+        elif bundled_sample:
+            interpretation = (
+                "We're coaching your "
+                + part
+                + " line using the bundled "
+                + _BUNDLED_SAMPLE_TITLE
+                + " score text (default sheet music)."
+            )
+        else:
+            interpretation = (
+                "We're coaching your " + part + " line using retrieved sheet-music text."
+            )
+        measure_cues = f"Sheet music excerpt (syllables & rhythm): {excerpt}"
+    else:
+        coaching = coaching_base
+        if bundled_sample and not ingested_score:
+            coaching += (
+                f" For line-specific help, type words that actually appear in {_BUNDLED_SAMPLE_TITLE} "
+                "so we can pull matching score text."
+            )
+        elif ingested_score:
+            coaching += (
+                " Type words from your PDF so retrieval can surface the right passage "
+                "(some PDFs extract text poorly — try a phrase from the score)."
+            )
+        else:
+            coaching += " Add sheet music in step 1 for line-specific cues."
+
+        if bundled_sample and not ingested_score:
+            interpretation = (
+                "We matched "
+                + part
+                + " from your message; enable richer cues by typing a lyric from "
+                + _BUNDLED_SAMPLE_TITLE
+                + " (default PDF)."
+            )
+        elif ingested_score:
+            interpretation = (
+                "We matched "
+                + part
+                + " — no score excerpt matched yet; try wording from your uploaded PDF."
+            )
+        else:
+            interpretation = "We matched your request to the " + part + " line."
+        measure_cues = ""
+
+    return {
+        "part": part,
+        "confidence": round(confidence, 2),
+        "interpretation": interpretation,
+        "frequency_range_hz": [round(low_hz, 1), round(high_hz, 1)],
+        "coaching": coaching,
+        "measure_cues": measure_cues,
+    }
+
+
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
@@ -262,17 +414,45 @@ def analyze_request():
 
     use_rag = bool(data.get("use_rag"))
     use_sample_score = bool(data.get("use_sample_score"))
+    force_instant = _env_truthy("SECTIONAL_INSTANT_ANALYZE")
+    instant_analyze = force_instant or bool(data.get("instant_analyze"))
+
     rag_context = None
     if use_sample_score:
         rag_context = _sample_score_context(user_input)
     if use_rag:
-        rag_timeout_s = float(os.getenv("RAG_QUERY_TIMEOUT_SECONDS", "2.5"))
         rag_n_results = int(os.getenv("RAG_QUERY_N_RESULTS", "3"))
-        rag_ctx = _query_rag_context_with_timeout(
-            user_input, n_results=rag_n_results, timeout_s=rag_timeout_s
+        if instant_analyze:
+            rag_ctx = None
+            try:
+                rag_ctx = _rag().query_context_lexical(
+                    user_input, n_results=rag_n_results
+                )
+            except Exception:
+                rag_ctx = None
+            if rag_ctx:
+                rag_context = (
+                    f"{rag_context}\n\n{rag_ctx}" if rag_context else rag_ctx
+                )
+        else:
+            rag_timeout_s = float(os.getenv("RAG_QUERY_TIMEOUT_SECONDS", "2.5"))
+            rag_ctx = _query_rag_context_with_timeout(
+                user_input, n_results=rag_n_results, timeout_s=rag_timeout_s
+            )
+            if rag_ctx:
+                rag_context = (
+                    f"{rag_context}\n\n{rag_ctx}" if rag_context else rag_ctx
+                )
+
+    if instant_analyze:
+        return jsonify(
+            _instant_analyze_payload(
+                user_input,
+                rag_context,
+                bundled_sample=use_sample_score,
+                ingested_score=use_rag,
+            )
         )
-        if rag_ctx:
-            rag_context = f"{rag_context}\n\n{rag_ctx}" if rag_context else rag_ctx
 
     try:
         message = client.messages.create(
