@@ -45,6 +45,59 @@ const SINGER_VOICE_SECTIONS = [
   "everyone",
 ] as const;
 
+const LOCAL_PART_BANDS: Record<string, [number, number]> = {
+  soprano: [250, 1000],
+  alto: [200, 700],
+  mezzo: [200, 900],
+  tenor: [130, 500],
+  baritone: [100, 400],
+  bass: [80, 350],
+  vocals: [80, 1200],
+};
+
+const LOCAL_COACHING: Record<string, string> = {
+  soprano:
+    "Keep vowels tall and unified across sustained notes; avoid scooping into entrances.",
+  alto: "Anchor inner harmony with steady vowel color and clear consonant releases.",
+  mezzo:
+    "Bridge between soprano and alto color; shape phrase peaks without forcing.",
+  tenor:
+    "Place tone forward without nasality and lock pickups rhythmically with the section.",
+  baritone:
+    "Support the low mids with clean diction so inner harmony stays present and clear.",
+  bass: "Prioritize rhythmic solidity and tune roots/fifths before adding extra weight.",
+  vocals:
+    "Track one line per pass and check blend points where parts move together in rhythm.",
+};
+
+function buildLocalAnalyzeResult(
+  singerVoicePart: string,
+  lineText: string,
+  usingSampleScore: boolean,
+  usingUploadedScore: boolean
+): AnalyzeResponse {
+  const part = singerVoicePart === "everyone" ? "vocals" : singerVoicePart;
+  const scoreSource = usingUploadedScore
+    ? "your uploaded PDF"
+    : usingSampleScore
+      ? SAMPLE_SCORE_TITLE
+      : "the selected score";
+  return {
+    part,
+    confidence: 0.84,
+    interpretation: `Instant tips for ${part} while we finish full analysis.`,
+    frequency_range_hz: LOCAL_PART_BANDS[part] ?? LOCAL_PART_BANDS.vocals,
+    coaching:
+      `${LOCAL_COACHING[part] ?? LOCAL_COACHING.vocals} ` +
+      `Use exact lyric wording from ${scoreSource} for stronger cue matching.`,
+    measure_cues: lineText
+      ? `Working line: "${lineText.slice(0, 160)}"${
+          lineText.length > 160 ? "…" : ""
+        }`
+      : "",
+  };
+}
+
 function StatusPill({
   ok,
   simple,
@@ -131,6 +184,7 @@ export default function App() {
     null
   );
   const [analyzeErr, setAnalyzeErr] = useState<string | null>(null);
+  const [analyzeRefining, setAnalyzeRefining] = useState(false);
   /** Developer-only: when true, POST /analyze calls Claude (seconds); default stays instant/heuristic. */
   const [useAiAnalyze, setUseAiAnalyze] = useState(false);
 
@@ -204,7 +258,7 @@ export default function App() {
   async function onAnalyze(e: React.FormEvent) {
     e.preventDefault();
     setAnalyzeErr(null);
-    setAnalyzeResult(null);
+    setAnalyzeRefining(false);
 
     let payloadText = analyzeText.trim();
     if (!developerMode) {
@@ -217,11 +271,33 @@ export default function App() {
         return;
       }
       payloadText = `Voice part: ${singerVoicePart}. Line I'm learning: ${payloadText}`;
+      const localResult = buildLocalAnalyzeResult(
+        singerVoicePart,
+        analyzeText.trim(),
+        useSampleScore,
+        useRag
+      );
+      setAnalyzeResult(localResult);
+      setAnalyzeLoading(false);
+      setAnalyzeRefining(true);
+      void (async () => {
+        const res = await postAnalyze(payloadText, useRag, useSampleScore, true);
+        if (isApiError(res)) {
+          setAnalyzeErr("Showing instant tips while the server wakes up.");
+          setAnalyzeRefining(false);
+          return;
+        }
+        setAnalyzeErr(null);
+        setAnalyzeResult(res);
+        setAnalyzeRefining(false);
+      })();
+      return;
     } else if (!payloadText) {
       setAnalyzeErr("Enter text to analyze.");
       return;
     }
 
+    setAnalyzeResult(null);
     setAnalyzeLoading(true);
     const res = await postAnalyze(
       payloadText,
@@ -230,6 +306,7 @@ export default function App() {
       developerMode ? !useAiAnalyze : true
     );
     setAnalyzeLoading(false);
+    setAnalyzeRefining(false);
     if (isApiError(res)) {
       setAnalyzeErr(res.error);
       return;
@@ -805,9 +882,18 @@ export default function App() {
                           !singerVoicePart
                         }
                       >
-                        {analyzeLoading ? "working…" : "get tips for my part"}
+                        {analyzeLoading
+                          ? "working…"
+                          : analyzeRefining
+                            ? "instant tip shown… refining"
+                            : "get tips for my part"}
                       </button>
                     </form>
+                    {analyzeRefining ? (
+                      <p className="flow-hint">
+                        Instant tip shown. Refining with full score analysis in the background…
+                      </p>
+                    ) : null}
                     {analyzeErr && <p className="err">{analyzeErr}</p>}
                     {analyzeResult ? <SingerSummary result={analyzeResult} /> : null}
                   </div>
