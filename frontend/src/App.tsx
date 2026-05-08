@@ -15,10 +15,11 @@ import "./App.css";
 
 const STORAGE_DEV = "sectional-developer-mode";
 const SAMPLE_SCORE_PATH = "/samples/have-yourself-a-merry-little-christmas.pdf";
-const SAMPLE_SCORE_NAME = "Have Yourself a Merry Little Christmas.pdf";
+const SAMPLE_SCORE_TITLE = "Have Yourself a Merry Little Christmas";
+const SAMPLE_SCORE_NAME = `${SAMPLE_SCORE_TITLE}.pdf`;
 
 const TAGLINE_SINGER =
-  "\u266a hear your line more clearly: upload your rehearsal recording, pull the singers away from the piano, get simple tips for your part, then gently bring your section forward in the mix.";
+  `\u266a ${SAMPLE_SCORE_TITLE} is built in — no upload required for tips. Tap your section, type your line, get coaching; upload only if you want a different PDF or a rehearsal recording for split/EQ.`;
 
 const TAGLINE_DEV =
   "\u266a practice tool for choirs & a cappella groups: pull out vocal lines, get cues for your part, then gently eq so your line sits forward in the mix - powered by stem separation (isolated tracks), an LLM (plain-language \u2192 structured data), and band-pass DSP (frequency shaping, not magic).";
@@ -32,6 +33,17 @@ const PART_QUICK_LINES: { label: string; line: string }[] = [
   { label: "bass", line: "bring out the bass line." },
   { label: "everyone", line: "all voices together - no single part boosted." },
 ];
+
+/** Singer section chips only (must stay in sync with voice-part detection on the server). */
+const SINGER_VOICE_SECTIONS = [
+  "soprano",
+  "alto",
+  "mezzo",
+  "tenor",
+  "baritone",
+  "bass",
+  "everyone",
+] as const;
 
 function StatusPill({
   ok,
@@ -65,19 +77,19 @@ function SingerSummary({ result }: { result: AnalyzeResponse }) {
       </p>
       {result.interpretation ? (
         <p className="singer-summary-block">
-          <span className="singer-summary-label">what we heard</span>
+          <span className="singer-summary-label">summary</span>
           {result.interpretation}
         </p>
       ) : null}
       {result.coaching ? (
         <p className="singer-summary-block">
-          <span className="singer-summary-label">listening tips</span>
+          <span className="singer-summary-label">how to sing this part</span>
           {result.coaching}
         </p>
       ) : null}
       {result.measure_cues ? (
         <p className="singer-summary-block">
-          <span className="singer-summary-label">entrances &amp; cues</span>
+          <span className="singer-summary-label">from your sheet music</span>
           {result.measure_cues}
         </p>
       ) : null}
@@ -105,14 +117,22 @@ export default function App() {
 
   const [apiOk, setApiOk] = useState<boolean | null>(null);
 
-  const [analyzeText, setAnalyzeText] = useState(PART_QUICK_LINES[0].line);
+  const [analyzeText, setAnalyzeText] = useState("");
   const [useRag, setUseRag] = useState(false);
-  const [useSampleScore, setUseSampleScore] = useState(false);
+  const [useSampleScore, setUseSampleScore] = useState(() => {
+    try {
+      return localStorage.getItem(STORAGE_DEV) !== "1";
+    } catch {
+      return true;
+    }
+  });
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResponse | null>(
     null
   );
   const [analyzeErr, setAnalyzeErr] = useState<string | null>(null);
+  /** Developer-only: when true, POST /analyze calls Claude (seconds); default stays instant/heuristic. */
+  const [useAiAnalyze, setUseAiAnalyze] = useState(false);
 
   const [file, setFile] = useState<File | null>(null);
   const [sepLoading, setSepLoading] = useState(false);
@@ -125,6 +145,15 @@ export default function App() {
   const [ragIngestErr, setRagIngestErr] = useState<string | null>(null);
   const [ragIngestLoading, setRagIngestLoading] = useState(false);
   const [scoreFile, setScoreFile] = useState<File | null>(null);
+  /** Singer flow: section button (lyrics go in analyzeText). */
+  const [singerVoicePart, setSingerVoicePart] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (developerMode) return;
+    if (!useRag) {
+      setUseSampleScore(true);
+    }
+  }, [developerMode, useRag]);
 
   const ping = useCallback(async () => {
     const h = await getHealth();
@@ -150,7 +179,7 @@ export default function App() {
     setUseRag(true);
     setUseSampleScore(false);
     setRagIngestMsg(
-      `score ready: added ${okRes.chunks_added} chunk${okRes.chunks_added === 1 ? "" : "s"} from ${okRes.source}`
+      `${okRes.chunks_added} text chunk${okRes.chunks_added === 1 ? "" : "s"} from ${okRes.source}. Tips now use your PDF (refresh the page to go back to the provided score only).`
     );
     return okRes;
   }
@@ -176,8 +205,30 @@ export default function App() {
     e.preventDefault();
     setAnalyzeErr(null);
     setAnalyzeResult(null);
+
+    let payloadText = analyzeText.trim();
+    if (!developerMode) {
+      if (!singerVoicePart) {
+        setAnalyzeErr("Tap your section first (soprano, alto, …).");
+        return;
+      }
+      if (!payloadText) {
+        setAnalyzeErr("Type the line you're learning in the box.");
+        return;
+      }
+      payloadText = `Voice part: ${singerVoicePart}. Line I'm learning: ${payloadText}`;
+    } else if (!payloadText) {
+      setAnalyzeErr("Enter text to analyze.");
+      return;
+    }
+
     setAnalyzeLoading(true);
-    const res = await postAnalyze(analyzeText.trim(), useRag, useSampleScore);
+    const res = await postAnalyze(
+      payloadText,
+      useRag,
+      useSampleScore,
+      developerMode ? !useAiAnalyze : true
+    );
     setAnalyzeLoading(false);
     if (isApiError(res)) {
       setAnalyzeErr(res.error);
@@ -281,9 +332,11 @@ export default function App() {
             <details className="extra">
               <summary>technical notes</summary>
               <p className="extra-body">
-                stems via demucs; part + Hz hints via claude (<code>POST /analyze</code>
-                ); gentle band-pass on the vocal stem (<code>POST /emphasize</code>).
-                optional RAG = score text in the prompt. see repo{" "}
+                stems via demucs; part + Hz via instant heuristics by default (
+                <code>POST /analyze</code> with <code>instant_analyze</code>) or optional
+                claude when enabled; gentle band-pass on the vocal stem (
+                <code>POST /emphasize</code>). optional RAG = score text in the prompt (slow
+                path only). see repo{" "}
                 <strong>readme</strong> for architecture and deployment.
               </p>
             </details>
@@ -342,6 +395,14 @@ export default function App() {
                   onChange={(e) => setAnalyzeText(e.target.value)}
                   placeholder="or write your own request…"
                 />
+                <label className="check check-tight">
+                  <input
+                    type="checkbox"
+                    checked={useAiAnalyze}
+                    onChange={(e) => setUseAiAnalyze(e.target.checked)}
+                  />
+                  use Claude for analyze (slower; disables instant tips path)
+                </label>
                 <label className="check check-tight">
                   <input
                     type="checkbox"
@@ -534,197 +595,260 @@ export default function App() {
           <section className="card card-singer-flow">
             <h2 className="card-title">rehearsal helper</h2>
             <p className="card-desc card-desc-tight singer-intro">
-              choose your path: <strong>sheet music only</strong> (step 3) or full audio
-              path (steps 1-4). split + EQ need a recording; part tips can run from score
-              context alone.
+              Tips use our bundled PDF (<strong>{SAMPLE_SCORE_NAME}</strong>) automatically.
+              Add your own PDF only for another piece; add audio only if you want split and EQ.
             </p>
-
-            <div className="flow-step flow-step-first">
-              <h3 className="flow-step-title">
-                <span className="flow-step-num">1</span> your recording (optional)
-              </h3>
-              {uploadBlock("audio-singer")}
+            <div
+              className="built-in-notice"
+              role="region"
+              aria-labelledby="built-in-notice-heading"
+            >
+              <p id="built-in-notice-heading" className="built-in-notice-title">
+                Can't upload your own PDF? You don't need one.
+              </p>
+              <p className="built-in-notice-body">
+                The complete <strong>{SAMPLE_SCORE_TITLE}</strong> sheet music is{" "}
+                <strong>already built into this page</strong>. You can go straight to your section and line —{" "}
+                <strong>no upload is required</strong> for tips on this piece. Only use the PDF upload if you're working from{" "}
+                <strong>different music</strong>; only use the recording upload if you want <strong>split / EQ</strong> on a rehearsal track.
+              </p>
             </div>
 
-            <div className="flow-step">
-              <h3 className="flow-step-title">
-                <span className="flow-step-num">2</span> split singers from the accompaniment
-                (optional)
-              </h3>
-              <p className="flow-step-desc">
-                optional audio path: separates an “all singers” track from piano, organ,
-                or backing - so you can focus on the choir.
-              </p>
-              <form onSubmit={onSeparate} className="form flow-step-form">
-                <button
-                  type="submit"
-                  className="btn primary"
-                  disabled={sepLoading || !file}
-                >
-                  {sepLoading ? "working…" : "split recording"}
-                </button>
-                {!file ? (
-                  <p className="flow-step-desc">
-                    skip this if you only want score-based part tips.
-                  </p>
-                ) : null}
-              </form>
-              {sepErr && <p className="err">{sepErr}</p>}
-              {sepResult && (
-                <div className="stems stems-compact">
-                  <p className="stems-compact-label">listen to each layer</p>
-                  <ul className="stem-list">
-                    {sepResult.stems.map((stem) => (
-                      <li key={stem} className="stem-item">
-                        <span className="stem-name">{stem}</span>
-                        <audio
-                          controls
-                          src={stemAudioUrl(sepResult.job_id, stem)}
-                          className="player"
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                  <button type="button" className="btn ghost sm" onClick={refreshJob}>
-                    refresh list
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="flow-step">
-              <h3 className="flow-step-title">
-                <span className="flow-step-num">3</span> which line are you learning?
-              </h3>
-              <p className="flow-step-desc">
-                tap your section or write in your own words, then get plain-language tips.
-                this works even if you only upload sheet music and no recording.
-              </p>
-              <div className="part-grid" role="group" aria-label="Voice sections">
-                {PART_QUICK_LINES.map(({ label, line }) => (
-                  <button
-                    key={label}
-                    type="button"
-                    className="btn part-btn"
-                    onClick={() => setAnalyzeText(line)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <form onSubmit={onAnalyze} className="form">
-                <label className="label" htmlFor="nl-singer">
-                  your words (optional edit)
-                </label>
-                <textarea
-                  id="nl-singer"
-                  className="textarea textarea-short"
-                  rows={3}
-                  value={analyzeText}
-                  onChange={(e) => setAnalyzeText(e.target.value)}
-                  placeholder="e.g. help me hear the alto on page two"
-                />
-                <button type="submit" className="btn primary" disabled={analyzeLoading}>
-                  {analyzeLoading ? "working…" : "get tips for my part"}
-                </button>
-              </form>
-              <div className="score-tools">
-                <p className="score-tools-label">choose your score source (optional)</p>
-                <p className="flow-step-desc score-tools-desc">
-                  default sample is <strong>{SAMPLE_SCORE_NAME}</strong> (free to use), or
-                  upload your own sheet music.
-                </p>
-                <button
-                  type="button"
-                  className="btn ghost"
-                  disabled={ragIngestLoading}
-                  onClick={() => void onUseSampleScore()}
-                >
-                  {ragIngestLoading
-                    ? "loading sample…"
-                    : `use default sample: ${SAMPLE_SCORE_NAME}`}
-                </button>
-                <a
-                  className="score-tools-link"
-                  href={SAMPLE_SCORE_PATH}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  preview default sample pdf
-                </a>
-                <details className="sample-preview" open>
-                  <summary>preview: {SAMPLE_SCORE_NAME}</summary>
-                  <object
-                    className="sample-preview-frame"
-                    data={SAMPLE_SCORE_PATH}
-                    type="application/pdf"
-                  >
+            {(() => {
+              const hasRecording = Boolean(file);
+              const stepTips = hasRecording ? 3 : 2;
+              const stepEq = hasRecording ? 4 : 3;
+              return (
+                <>
+                  <div className="flow-step flow-step-first">
+                    <h3 className="flow-step-title">
+                      <span className="flow-step-num">1</span> upload recording and/or PDF
+                    </h3>
                     <p className="flow-step-desc">
-                      pdf preview unavailable in this browser.{" "}
-                      <a href={SAMPLE_SCORE_PATH} target="_blank" rel="noreferrer">
-                        open sample score
-                      </a>
-                      .
+                      Optional uploads only. Split and EQ need a recording; swapping scores needs your PDF.
+                      Otherwise skip straight to your section — the bundled PDF below is already active for tips.
                     </p>
-                  </object>
-                </details>
-                <div className="form form-compact">
-                  <label className="label" htmlFor="score-upload-singer">
-                    upload your own sheet music
-                  </label>
-                  <input
-                    id="score-upload-singer"
-                    type="file"
-                    accept=".pdf,.md,.txt,text/plain,application/pdf"
-                    className="file"
-                    onChange={(e) => setScoreFile(e.target.files?.[0] ?? null)}
-                  />
-                  <button
-                    className="btn"
-                    type="button"
-                    disabled={ragIngestLoading || !scoreFile}
-                    onClick={() => void onUploadOwnScore()}
-                  >
-                    ingest score
-                  </button>
-                </div>
-                {ragIngestMsg && <p className="ok-msg">{ragIngestMsg}</p>}
-                {ragIngestErr && <p className="err">{ragIngestErr}</p>}
-              </div>
-              {analyzeErr && <p className="err">{analyzeErr}</p>}
-              {analyzeResult ? <SingerSummary result={analyzeResult} /> : null}
-            </div>
 
-            <div className="flow-step flow-step-last">
-              <h3 className="flow-step-title">
-                <span className="flow-step-num">4</span> make my part a little louder
-                (optional)
-              </h3>
-              <p className="flow-step-desc">
-                gentle tone shaping on the singers’ track - not a perfect solo, but
-                easier to hear your section in headphones. run this after split and tips.
-              </p>
-              <div className="emph-row">
-                <button
-                  type="button"
-                  className="btn primary"
-                  disabled={!canEmphasize || emphLoading}
-                  onClick={() => void onEmphasize()}
-                >
-                  {emphLoading ? "working…" : "boost my part"}
-                </button>
-                {!canEmphasize && (
-                  <span className="hint">finish steps 2 and 3 first.</span>
-                )}
-              </div>
-              {emphErr && <p className="err">{emphErr}</p>}
-              {sepResult && canEmphasize && (
-                <p className="flow-hint">
-                  after boosting, use <strong>refresh list</strong> above if you don’t see
-                  a new track.
-                </p>
-              )}
-            </div>
+                    <div className="provided-score-block">
+                      <p className="provided-score-head">provided sheet music</p>
+                      <p className="flow-step-desc flow-step-desc-tight provided-score-lead">
+                        <strong>{SAMPLE_SCORE_NAME}</strong> — this is your default score for tips (nothing to upload).
+                      </p>
+                      <a
+                        className="score-tools-link"
+                        href={SAMPLE_SCORE_PATH}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        open PDF in a new tab
+                      </a>
+                      <object
+                        className="sample-preview-frame sample-preview-prominent"
+                        data={SAMPLE_SCORE_PATH}
+                        type="application/pdf"
+                      >
+                        <p className="flow-step-desc">
+                          PDF preview unavailable in this browser.{" "}
+                          <a href={SAMPLE_SCORE_PATH} target="_blank" rel="noreferrer">
+                            open provided score
+                          </a>
+                          .
+                        </p>
+                      </object>
+                    </div>
+
+                    <div className="form flow-step-stack">
+                      <label className="label" htmlFor="score-upload-singer">
+                        different piece? upload your PDF <span className="label-tag">optional</span>
+                      </label>
+                      <p className="flow-step-desc flow-step-desc-tight built-in-skip-hint">
+                        <strong>Staying on {SAMPLE_SCORE_TITLE}?</strong> Skip this — the score above is already loaded for tips.
+                      </p>
+                      <p className="flow-step-desc flow-step-desc-tight">
+                        Only if you're practicing <strong>other sheet music</strong>: load your file here.
+                        Text-based PDFs work best; scanned pages sometimes won't extract — try another export if tips miss your lyrics.
+                      </p>
+                      <input
+                        id="score-upload-singer"
+                        type="file"
+                        accept=".pdf,.md,.txt,text/plain,application/pdf"
+                        className="file"
+                        onChange={(e) => setScoreFile(e.target.files?.[0] ?? null)}
+                      />
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={ragIngestLoading || !scoreFile}
+                        onClick={() => void onUploadOwnScore()}
+                      >
+                        load my PDF for tips
+                      </button>
+                      {!scoreFile ? (
+                        <p className="file-picked muted">
+                          nothing uploaded — tips keep using the built-in <strong>{SAMPLE_SCORE_TITLE}</strong> score (that's normal).
+                        </p>
+                      ) : (
+                        <p className="file-picked">
+                          picked: <strong>{scoreFile.name}</strong> — tap “load my PDF for tips”.
+                        </p>
+                      )}
+                      {ragIngestMsg && <p className="ok-msg">{ragIngestMsg}</p>}
+                      {ragIngestErr && <p className="err">{ragIngestErr}</p>}
+                    </div>
+
+                    <div className="form flow-step-stack">
+                      <label className="label" htmlFor="audio-singer">
+                        rehearsal recording <span className="label-tag">optional</span>
+                      </label>
+                      <input
+                        id="audio-singer"
+                        type="file"
+                        accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a"
+                        className="file"
+                        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                      />
+                      {file ? (
+                        <p className="file-picked">
+                          selected: <strong>{file.name}</strong>
+                        </p>
+                      ) : (
+                        <p className="file-picked muted">
+                          no recording — split and EQ stay unavailable below (tips still work).
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {hasRecording ? (
+                    <div className="flow-step">
+                      <h3 className="flow-step-title">
+                        <span className="flow-step-num">2</span> split recording — <span className="step-scope">recording only</span>
+                      </h3>
+                      <p className="flow-step-desc">
+                        Separates singers from piano or backing so you can solo the vocal stem. Only shown because you added a recording in step 1.
+                      </p>
+                      <form onSubmit={onSeparate} className="form flow-step-form">
+                        <button
+                          type="submit"
+                          className="btn primary"
+                          disabled={sepLoading || !file}
+                        >
+                          {sepLoading ? "working…" : "split recording"}
+                        </button>
+                      </form>
+                      {sepErr && <p className="err">{sepErr}</p>}
+                      {sepResult && (
+                        <div className="stems stems-compact">
+                          <p className="stems-compact-label">listen to each layer</p>
+                          <ul className="stem-list">
+                            {sepResult.stems.map((stem) => (
+                              <li key={stem} className="stem-item">
+                                <span className="stem-name">{stem}</span>
+                                <audio
+                                  controls
+                                  src={stemAudioUrl(sepResult.job_id, stem)}
+                                  className="player"
+                                />
+                              </li>
+                            ))}
+                          </ul>
+                          <button type="button" className="btn ghost sm" onClick={refreshJob}>
+                            refresh list
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  <div className="flow-step">
+                    <h3 className="flow-step-title">
+                      <span className="flow-step-num">{stepTips}</span> your section and line
+                    </h3>
+                    <p className="flow-step-desc">
+                      Tap your section, then type the line you're learning (paste lyrics from the PDF or score notes).
+                      <strong> Built-in score users:</strong> you don't need to upload anything — just pull wording from the provided PDF above.
+                      Matching words from your score yields richer tips. Default cues match <strong>{SAMPLE_SCORE_TITLE}</strong>; after you load a different PDF, cues match that file instead.
+                    </p>
+                    <div className="part-grid" role="group" aria-label="Voice sections">
+                      {SINGER_VOICE_SECTIONS.map((label) => (
+                        <button
+                          key={label}
+                          type="button"
+                          className={
+                            singerVoicePart === label ? "btn part-btn part-btn-selected" : "btn part-btn"
+                          }
+                          aria-pressed={singerVoicePart === label}
+                          onClick={() => setSingerVoicePart(label)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <form onSubmit={onAnalyze} className="form">
+                      <label className="label" htmlFor="nl-singer">
+                        line you're learning
+                      </label>
+                      <textarea
+                        id="nl-singer"
+                        className="textarea textarea-short"
+                        rows={3}
+                        value={analyzeText}
+                        onChange={(e) => setAnalyzeText(e.target.value)}
+                        placeholder={`Example from ${SAMPLE_SCORE_TITLE}: “have yourself a merry little christmas”`}
+                      />
+                      <button
+                        type="submit"
+                        className="btn primary"
+                        disabled={
+                          analyzeLoading ||
+                          !analyzeText.trim() ||
+                          !singerVoicePart
+                        }
+                      >
+                        {analyzeLoading ? "working…" : "get tips for my part"}
+                      </button>
+                    </form>
+                    {analyzeErr && <p className="err">{analyzeErr}</p>}
+                    {analyzeResult ? <SingerSummary result={analyzeResult} /> : null}
+                  </div>
+
+                  <div className="flow-step flow-step-last">
+                    <h3 className="flow-step-title">
+                      <span className="flow-step-num">{stepEq}</span> boost my part in the mix{" "}
+                      <span className="label-tag">recording only</span>
+                    </h3>
+                    <p className="flow-step-desc">
+                      Gentle EQ on the separated vocal track so your section is easier to hear in headphones —{" "}
+                      <strong>only after</strong> you added a recording (step 1), ran split (step 2), and got tips.
+                      Skip this entire step if you’re only working from sheet music.
+                    </p>
+                    <div className="emph-row">
+                      <button
+                        type="button"
+                        className="btn primary"
+                        disabled={!canEmphasize || emphLoading}
+                        onClick={() => void onEmphasize()}
+                      >
+                        {emphLoading ? "working…" : "boost my part"}
+                      </button>
+                      {!canEmphasize && (
+                        <span className="hint">
+                          {!hasRecording
+                            ? "Not available without a recording — add audio in step 1, then split and get tips."
+                            : "Split the recording (step 2), then get tips (previous step), then come back here."}
+                        </span>
+                      )}
+                    </div>
+                    {emphErr && <p className="err">{emphErr}</p>}
+                    {sepResult && canEmphasize && (
+                      <p className="flow-hint">
+                        After boosting, use <strong>refresh list</strong> in step 2 if you don’t see a new track.
+                      </p>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </section>
         )}
       </main>
