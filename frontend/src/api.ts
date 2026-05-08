@@ -57,7 +57,8 @@ export async function getHealth(): Promise<HealthResponse | ApiError> {
 export async function postAnalyze(
   text: string,
   useRag: boolean,
-  useSampleScore: boolean
+  useSampleScore: boolean,
+  instantAnalyze = true
 ): Promise<AnalyzeResponse | ApiError> {
   const res = await fetch(`${prefix}/analyze`, {
     method: "POST",
@@ -66,6 +67,7 @@ export async function postAnalyze(
       text,
       use_rag: useRag,
       use_sample_score: useSampleScore,
+      instant_analyze: instantAnalyze,
     }),
   });
   return parseJson<AnalyzeResponse>(res);
