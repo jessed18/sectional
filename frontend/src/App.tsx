@@ -45,6 +45,188 @@ const SINGER_VOICE_SECTIONS = [
   "everyone",
 ] as const;
 
+type MelodyEvent = {
+  note: string;
+  beats: number;
+};
+
+type LyricMelodyPhrase = {
+  lyric: string;
+  events: MelodyEvent[];
+};
+
+const SAMPLE_OPENING_MELODY: MelodyEvent[] = [
+  { note: "G4", beats: 1 },
+  { note: "A4", beats: 1 },
+  { note: "G4", beats: 1 },
+  { note: "E4", beats: 1 },
+  { note: "D4", beats: 2 },
+  { note: "G4", beats: 1 },
+  { note: "A4", beats: 1 },
+  { note: "G4", beats: 1 },
+  { note: "E4", beats: 1 },
+  { note: "D4", beats: 2 },
+  { note: "B4", beats: 1.5 },
+  { note: "B4", beats: 0.5 },
+  { note: "A4", beats: 1 },
+  { note: "G4", beats: 1 },
+  { note: "E4", beats: 1 },
+  { note: "D4", beats: 2 },
+];
+
+const SAMPLE_LYRIC_PHRASES: LyricMelodyPhrase[] = [
+  {
+    lyric: "have yourself a merry little christmas",
+    events: [
+      { note: "G4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+      { note: "G4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+    ],
+  },
+  {
+    lyric: "let your heart be light",
+    events: [
+      { note: "B4", beats: 1.5 },
+      { note: "B4", beats: 0.5 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+    ],
+  },
+  {
+    lyric: "from now on our troubles will be out of sight",
+    events: [
+      { note: "E4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "B4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+      { note: "G4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+    ],
+  },
+  {
+    lyric: "through the years we all will be together",
+    events: [
+      { note: "A4", beats: 1 },
+      { note: "B4", beats: 1 },
+      { note: "C5", beats: 1 },
+      { note: "B4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+    ],
+  },
+  {
+    lyric: "if the fates allow",
+    events: [
+      { note: "E4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+    ],
+  },
+  {
+    lyric: "hang a shining star upon the highest bough",
+    events: [
+      { note: "G4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "B4", beats: 1 },
+      { note: "C5", beats: 1 },
+      { note: "B4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+    ],
+  },
+];
+
+const NOTE_INDEX: Record<string, number> = {
+  C: 0,
+  "C#": 1,
+  Db: 1,
+  D: 2,
+  "D#": 3,
+  Eb: 3,
+  E: 4,
+  F: 5,
+  "F#": 6,
+  Gb: 6,
+  G: 7,
+  "G#": 8,
+  Ab: 8,
+  A: 9,
+  "A#": 10,
+  Bb: 10,
+  B: 11,
+};
+
+const PART_SEMITONE_SHIFT: Record<string, number> = {
+  soprano: 2,
+  alto: -2,
+  mezzo: 0,
+  tenor: -10,
+  baritone: -14,
+  bass: -19,
+  everyone: 0,
+};
+
+function noteToFrequency(note: string): number {
+  const m = note.match(/^([A-G](?:#|b)?)(-?\d)$/);
+  if (!m) return 440;
+  const pitch = m[1];
+  const octave = Number(m[2]);
+  const semitone = NOTE_INDEX[pitch];
+  if (semitone === undefined) return 440;
+  const midi = semitone + (octave + 1) * 12;
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+function shiftFrequency(freq: number, semitones: number): number {
+  return freq * Math.pow(2, semitones / 12);
+}
+
+function tokenizeLyric(text: string): string[] {
+  return (text.toLowerCase().match(/[a-z']+/g) ?? []).filter(Boolean);
+}
+
+function pickPhraseForLine(lineText: string): LyricMelodyPhrase | null {
+  const lineTokens = new Set(tokenizeLyric(lineText));
+  if (!lineTokens.size) return null;
+  let best: LyricMelodyPhrase | null = null;
+  let bestScore = 0;
+  for (const phrase of SAMPLE_LYRIC_PHRASES) {
+    const phraseTokens = tokenizeLyric(phrase.lyric);
+    let overlap = 0;
+    for (const t of phraseTokens) {
+      if (lineTokens.has(t)) overlap += 1;
+    }
+    if (overlap > bestScore) {
+      bestScore = overlap;
+      best = phrase;
+    }
+  }
+  return bestScore > 0 ? best : null;
+}
+
 const LOCAL_PART_BANDS: Record<string, [number, number]> = {
   soprano: [250, 1000],
   alto: [200, 700],
@@ -201,6 +383,9 @@ export default function App() {
   const [scoreFile, setScoreFile] = useState<File | null>(null);
   /** Singer flow: section button (lyrics go in analyzeText). */
   const [singerVoicePart, setSingerVoicePart] = useState<string | null>(null);
+  const [tempoBpm, setTempoBpm] = useState(72);
+  const [isPlayingScore, setIsPlayingScore] = useState(false);
+  const [isPlayingTypedLine, setIsPlayingTypedLine] = useState(false);
 
   useEffect(() => {
     if (developerMode) return;
@@ -253,6 +438,111 @@ export default function App() {
       return;
     }
     await ingestScoreFile(scoreFile, "user-upload");
+  }
+
+  async function onPlaySampleMelody() {
+    if (isPlayingScore) return;
+    if (typeof window === "undefined") return;
+    const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) {
+      setAnalyzeErr("This browser can't play audio preview.");
+      return;
+    }
+    setAnalyzeErr(null);
+    setIsPlayingScore(true);
+
+    const context = new Ctx();
+    const beatSec = 60 / tempoBpm;
+    let t = context.currentTime + 0.03;
+    const master = context.createGain();
+    master.gain.value = 0.11;
+    master.connect(context.destination);
+    const semitoneShift = singerVoicePart ? PART_SEMITONE_SHIFT[singerVoicePart] ?? 0 : 0;
+
+    for (const ev of SAMPLE_OPENING_MELODY) {
+      const duration = ev.beats * beatSec;
+      const osc = context.createOscillator();
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.26, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(0.04, duration - 0.02));
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(
+        shiftFrequency(noteToFrequency(ev.note), semitoneShift),
+        t
+      );
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(t);
+      osc.stop(t + duration);
+      t += duration;
+    }
+
+    const totalMs = Math.max(150, Math.round((t - context.currentTime) * 1000) + 40);
+    window.setTimeout(() => {
+      setIsPlayingScore(false);
+      void context.close();
+    }, totalMs);
+  }
+
+  async function onPlayTypedLine() {
+    if (isPlayingTypedLine) return;
+    const phrase = pickPhraseForLine(analyzeText);
+    if (!phrase) {
+      setAnalyzeErr(
+        "Couldn't match that lyric yet. Try a line from the sample like “have yourself a merry little christmas”."
+      );
+      return;
+    }
+    if (!singerVoicePart) {
+      setAnalyzeErr("Choose a section first, then play the line.");
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const Ctx =
+      window.AudioContext ||
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctx) {
+      setAnalyzeErr("This browser can't play audio preview.");
+      return;
+    }
+    setAnalyzeErr(null);
+    setIsPlayingTypedLine(true);
+    const context = new Ctx();
+    const beatSec = 60 / tempoBpm;
+    let t = context.currentTime + 0.03;
+    const master = context.createGain();
+    master.gain.value = 0.12;
+    master.connect(context.destination);
+    const semitoneShift = PART_SEMITONE_SHIFT[singerVoicePart] ?? 0;
+
+    for (const ev of phrase.events) {
+      const duration = ev.beats * beatSec;
+      const osc = context.createOscillator();
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.28, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        t + Math.max(0.04, duration - 0.02)
+      );
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(
+        shiftFrequency(noteToFrequency(ev.note), semitoneShift),
+        t
+      );
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(t);
+      osc.stop(t + duration);
+      t += duration;
+    }
+    const totalMs = Math.max(150, Math.round((t - context.currentTime) * 1000) + 40);
+    window.setTimeout(() => {
+      setIsPlayingTypedLine(false);
+      void context.close();
+    }, totalMs);
   }
 
   async function onAnalyze(e: React.FormEvent) {
@@ -711,6 +1001,33 @@ export default function App() {
                       <p className="flow-step-desc flow-step-desc-tight provided-score-lead">
                         <strong>{SAMPLE_SCORE_NAME}</strong> — this is your default score for tips (nothing to upload).
                       </p>
+                      <div className="score-audio-row">
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => void onPlaySampleMelody()}
+                          disabled={isPlayingScore}
+                        >
+                          {isPlayingScore ? "playing sample…" : "play sample melody"}
+                        </button>
+                        <label className="score-audio-tempo" htmlFor="score-tempo">
+                          tempo
+                          <input
+                            id="score-tempo"
+                            type="range"
+                            min={56}
+                            max={108}
+                            step={2}
+                            value={tempoBpm}
+                            onChange={(e) => setTempoBpm(Number(e.target.value))}
+                            disabled={isPlayingScore}
+                          />
+                          <span>{tempoBpm} bpm</span>
+                        </label>
+                      </div>
+                      <p className="flow-step-desc flow-step-desc-tight">
+                        Plays an audible note preview from the built-in score; selected section shifts register for practice.
+                      </p>
                       <a
                         className="score-tools-link"
                         href={SAMPLE_SCORE_PATH}
@@ -888,6 +1205,25 @@ export default function App() {
                             ? "instant tip shown… refining"
                             : "get tips for my part"}
                       </button>
+                      <div className="score-audio-row score-audio-row-inline">
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={() => void onPlayTypedLine()}
+                          disabled={
+                            isPlayingTypedLine ||
+                            !analyzeText.trim() ||
+                            !singerVoicePart
+                          }
+                        >
+                          {isPlayingTypedLine
+                            ? "playing this line…"
+                            : "hear this line (selected part)"}
+                        </button>
+                        <span className="flow-step-desc flow-step-desc-tight">
+                          Sample phrase playback from {SAMPLE_SCORE_TITLE}.
+                        </span>
+                      </div>
                     </form>
                     {analyzeRefining ? (
                       <p className="flow-hint">

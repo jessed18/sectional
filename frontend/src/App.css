@@ -417,6 +417,27 @@
   margin-bottom: 0.65rem !important;
 }
 
+.score-audio-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem 1rem;
+  margin: 0.2rem 0 0.65rem;
+}
+
+.score-audio-tempo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.score-audio-tempo input[type="range"] {
+  width: 7.5rem;
+}
+
 .sample-preview-prominent {
   margin-top: 0.65rem;
   min-height: min(52vh, 28rem);
