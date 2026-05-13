@@ -1279,9 +1279,7 @@ export default function App() {
                             !singerVoicePart
                           }
                         >
-                          {isPlayingTypedLine
-                            ? "playing preview…"
-                            : "preview this line"}
+                          {isPlayingTypedLine ? "playing…" : "hear my line"}
                         </button>
                         <span className="flow-step-desc flow-step-desc-tight muted-tight">
                           Short melody — not full score playback.
