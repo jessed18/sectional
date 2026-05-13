@@ -368,23 +368,106 @@ export function shiftNotesToZero(notes: ScoreNote[]): ScoreNote[] {
   return notes.map((n) => ({ ...n, startQuarters: n.startQuarters - t0 }));
 }
 
-export function playNotesWebAudio(
-  notes: ScoreNote[],
-  bpm: number,
-  onDone: () => void
-): void {
+/** Created on first user gesture; reused across plays (never closed). */
+let sharedAudioContext: AudioContext | null = null;
+
+function getOrCreateAudioContext(): AudioContext | null {
   const Ctx =
     window.AudioContext ||
     (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!Ctx) {
-    onDone();
-    return;
+  if (!Ctx) return null;
+  if (!sharedAudioContext) sharedAudioContext = new Ctx();
+  return sharedAudioContext;
+}
+
+/**
+ * Call from pointerdown on hear buttons so AudioContext exists before any await
+ * (fetching MXL yields the event loop and browsers drop the user-gesture chain).
+ */
+export function primeAudioOnUserGesture(): void {
+  const ctx = getOrCreateAudioContext();
+  if (!ctx) return;
+  void ctx.resume();
+}
+
+/** Exposed for UI (e.g. “sound blocked” hints). */
+export function getSharedAudioContextState(): AudioContextState | "unsupported" {
+  const ctx = sharedAudioContext;
+  if (!ctx) return "unsupported";
+  return ctx.state;
+}
+
+export async function ensureAudioUnlocked(): Promise<boolean> {
+  const ctx = getOrCreateAudioContext();
+  if (!ctx) return false;
+  for (let i = 0; i < 5; i++) {
+    if ((ctx.state as string) === "running") return true;
+    try {
+      await ctx.resume();
+    } catch {
+      /* continue */
+    }
+    if ((ctx.state as string) === "running") return true;
+    await new Promise((r) => setTimeout(r, 40));
   }
-  const ctx = new Ctx();
-  const beatSec = 60 / bpm;
-  const base = ctx.currentTime + 0.05;
+  return (ctx.state as string) === "running";
+}
+
+/** After tab switch / iOS background, try to move context back to running. */
+export function resumeAudioIfPossible(): void {
+  const ctx = sharedAudioContext;
+  if (!ctx) return;
+  const st = ctx.state as string;
+  if (st === "suspended" || st === "interrupted") void ctx.resume();
+}
+
+/** Short beep so the user can confirm output path (call from a click handler). */
+export async function playTestBeep(): Promise<boolean> {
+  if (!(await ensureAudioUnlocked())) return false;
+  const ctx = getOrCreateAudioContext();
+  if (!ctx || ctx.state !== "running") return false;
+  const t0 = ctx.currentTime + 0.04;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(0.28, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(880, t0);
+  osc.connect(g);
+  g.connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + 0.2);
+  return true;
+}
+
+export async function playNotesWebAudio(
+  notes: ScoreNote[],
+  bpm: number,
+  onDone: () => void
+): Promise<boolean> {
+  if (!notes.length) {
+    onDone();
+    return true;
+  }
+  const ctx = getOrCreateAudioContext();
+  if (!ctx) {
+    onDone();
+    return false;
+  }
+  if (!(await ensureAudioUnlocked())) {
+    onDone();
+    return false;
+  }
+  if (ctx.state !== "running") {
+    onDone();
+    return false;
+  }
+
+  const beatSec = 60 / Math.max(20, Math.min(300, bpm));
+  const base = ctx.currentTime + 0.08;
   const master = ctx.createGain();
-  master.gain.value = 0.12;
+  master.gain.value = 0.14;
   master.connect(ctx.destination);
 
   let latestEnd = base;
@@ -394,7 +477,7 @@ export function playNotesWebAudio(
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(0.2, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.22, t0 + 0.02);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + Math.max(0.05, sec - 0.03));
     osc.type = "triangle";
     osc.frequency.setValueAtTime(440 * Math.pow(2, (n.midi - 69) / 12), t0);
@@ -405,11 +488,16 @@ export function playNotesWebAudio(
     latestEnd = Math.max(latestEnd, t0 + sec);
   }
 
-  const ms = Math.max(200, (latestEnd - ctx.currentTime) * 1000 + 100);
+  const ms = Math.max(200, (latestEnd - ctx.currentTime) * 1000 + 120);
   window.setTimeout(() => {
-    void ctx.close();
+    try {
+      master.disconnect();
+    } catch {
+      /* ignore */
+    }
     onDone();
   }, ms);
+  return true;
 }
 
 export const IKAW_MXL_PATH = "/samples/ikaw-ang-aking-mahal.mxl";
