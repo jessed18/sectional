@@ -122,7 +122,7 @@ def _sample_score_chunks() -> list[str]:
     p = (
         Path(__file__).resolve().parent
         / "sample_scores"
-        / "have_yourself_a_merry_little_christmas.txt"
+        / "ikaw_ang_aking_mahal.txt"
     )
     if not p.exists():
         return []
@@ -301,7 +301,7 @@ def _detect_voice_part(user_input: str) -> tuple[str, float]:
     return "vocals", 0.55
 
 
-_BUNDLED_SAMPLE_TITLE = "Have Yourself a Merry Little Christmas"
+_BUNDLED_SAMPLE_TITLE = "Ikaw Ang Aking Mahal"
 
 
 def _instant_analyze_payload(
@@ -340,7 +340,7 @@ def _instant_analyze_payload(
                 + part
                 + " line using the bundled "
                 + _BUNDLED_SAMPLE_TITLE
-                + " score text (default sheet music)."
+                + " score text (from the built-in demo piece)."
             )
         else:
             interpretation = (
@@ -368,7 +368,7 @@ def _instant_analyze_payload(
                 + part
                 + " from your message; enable richer cues by typing a lyric from "
                 + _BUNDLED_SAMPLE_TITLE
-                + " (default PDF)."
+                + " (default bundled score text)."
             )
         elif ingested_score:
             interpretation = (

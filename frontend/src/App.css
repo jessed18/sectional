@@ -434,6 +434,11 @@
   color: var(--accent);
 }
 
+.ikaw-score-note code {
+  font-size: 0.78em;
+  word-break: break-all;
+}
+
 .built-in-notice {
   margin: 0.85rem 0 1.35rem;
   padding: 1rem 1.15rem;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getHealth,
   getJob,
@@ -11,15 +11,25 @@ import {
   type AnalyzeResponse,
   type SeparateResponse,
 } from "./api";
+import {
+  IKAW_MXL_PATH,
+  loadMusicXmlFromMxl,
+  parsePartNotes,
+  parseScoreTempoBpm,
+  parseTuttiNotes,
+  pickNotesForLine,
+  playNotesWebAudio,
+  resolvePartIdForSection,
+  shiftNotesToZero,
+} from "./musicxmlPlay";
 import "./App.css";
 
 const STORAGE_DEV = "sectional-developer-mode";
-const SAMPLE_SCORE_PATH = "/samples/have-yourself-a-merry-little-christmas.pdf";
-const SAMPLE_SCORE_TITLE = "Have Yourself a Merry Little Christmas";
-const SAMPLE_SCORE_NAME = `${SAMPLE_SCORE_TITLE}.pdf`;
+const IKAW_SCORE_TITLE = "Ikaw Ang Aking Mahal";
+const IKAW_MXL_NAME = "ikaw-ang-aking-mahal.mxl";
 
 const TAGLINE_SINGER =
-  "\u266a Built-in score for tips. Pick your part, type a line, tap get tips. Upload only if you want another PDF or a recording for split/EQ.";
+  "\u266a Built-in MusicXML demo for tips and playback. Pick your part, type a line, tap get tips. Upload only if you want another PDF or a recording for split/EQ.";
 
 const TAGLINE_DEV =
   "\u266a practice tool for choirs & a cappella groups: pull out vocal lines, get cues for your part, then gently eq so your line sits forward in the mix - powered by stem separation (isolated tracks), an LLM (plain-language \u2192 structured data), and band-pass DSP (frequency shaping, not magic).";
@@ -44,244 +54,6 @@ const SINGER_VOICE_SECTIONS = [
   "bass",
   "everyone",
 ] as const;
-
-type MelodyEvent = {
-  note: string;
-  beats: number;
-};
-
-type LyricMelodyPhrase = {
-  lyric: string;
-  events: MelodyEvent[];
-};
-
-const SAMPLE_OPENING_MELODY: MelodyEvent[] = [
-  { note: "G4", beats: 1 },
-  { note: "A4", beats: 1 },
-  { note: "G4", beats: 1 },
-  { note: "E4", beats: 1 },
-  { note: "D4", beats: 2 },
-  { note: "G4", beats: 1 },
-  { note: "A4", beats: 1 },
-  { note: "G4", beats: 1 },
-  { note: "E4", beats: 1 },
-  { note: "D4", beats: 2 },
-  { note: "B4", beats: 1.5 },
-  { note: "B4", beats: 0.5 },
-  { note: "A4", beats: 1 },
-  { note: "G4", beats: 1 },
-  { note: "E4", beats: 1 },
-  { note: "D4", beats: 2 },
-];
-
-const SAMPLE_LYRIC_PHRASES: LyricMelodyPhrase[] = [
-  {
-    lyric: "have yourself a merry little christmas",
-    events: [
-      { note: "G4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-      { note: "G4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-    ],
-  },
-  {
-    lyric: "let your heart be light",
-    events: [
-      { note: "B4", beats: 1.5 },
-      { note: "B4", beats: 0.5 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-    ],
-  },
-  {
-    lyric: "from now on our troubles will be out of sight",
-    events: [
-      { note: "E4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "B4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-      { note: "G4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-    ],
-  },
-  {
-    lyric: "through the years we all will be together",
-    events: [
-      { note: "A4", beats: 1 },
-      { note: "B4", beats: 1 },
-      { note: "C5", beats: 1 },
-      { note: "B4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-    ],
-  },
-  {
-    lyric: "if the fates allow",
-    events: [
-      { note: "E4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-    ],
-  },
-  {
-    lyric: "hang a shining star upon the highest bough",
-    events: [
-      { note: "G4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "B4", beats: 1 },
-      { note: "C5", beats: 1 },
-      { note: "B4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-    ],
-  },
-  {
-    lyric: "faithful friends who are dear to us",
-    events: [
-      { note: "E4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "B4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 2 },
-    ],
-  },
-  {
-    lyric: "gather near to us once more",
-    events: [
-      { note: "G4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-      { note: "E4", beats: 1 },
-      { note: "G4", beats: 1 },
-    ],
-  },
-  {
-    lyric: "someday soon we all will be together",
-    events: [
-      { note: "A4", beats: 1 },
-      { note: "B4", beats: 1 },
-      { note: "C5", beats: 1 },
-      { note: "B4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 2 },
-    ],
-  },
-  {
-    lyric: "here we are as in olden days",
-    events: [
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "A4", beats: 2 },
-    ],
-  },
-  {
-    lyric: "happy golden days of yore",
-    events: [
-      { note: "B4", beats: 1 },
-      { note: "A4", beats: 1 },
-      { note: "G4", beats: 1 },
-      { note: "E4", beats: 1 },
-      { note: "D4", beats: 2 },
-    ],
-  },
-];
-
-const NOTE_INDEX: Record<string, number> = {
-  C: 0,
-  "C#": 1,
-  Db: 1,
-  D: 2,
-  "D#": 3,
-  Eb: 3,
-  E: 4,
-  F: 5,
-  "F#": 6,
-  Gb: 6,
-  G: 7,
-  "G#": 8,
-  Ab: 8,
-  A: 9,
-  "A#": 10,
-  Bb: 10,
-  B: 11,
-};
-
-const PART_SEMITONE_SHIFT: Record<string, number> = {
-  soprano: 2,
-  alto: -2,
-  mezzo: 0,
-  tenor: -10,
-  baritone: -14,
-  bass: -19,
-  everyone: 0,
-};
-
-function noteToFrequency(note: string): number {
-  const m = note.match(/^([A-G](?:#|b)?)(-?\d)$/);
-  if (!m) return 440;
-  const pitch = m[1];
-  const octave = Number(m[2]);
-  const semitone = NOTE_INDEX[pitch];
-  if (semitone === undefined) return 440;
-  const midi = semitone + (octave + 1) * 12;
-  return 440 * Math.pow(2, (midi - 69) / 12);
-}
-
-function shiftFrequency(freq: number, semitones: number): number {
-  return freq * Math.pow(2, semitones / 12);
-}
-
-function tokenizeLyric(text: string): string[] {
-  return (text.toLowerCase().match(/[a-z']+/g) ?? []).filter(Boolean);
-}
-
-function pickPhraseForLine(lineText: string): LyricMelodyPhrase | null {
-  const lineTokens = new Set(tokenizeLyric(lineText));
-  if (!lineTokens.size) return null;
-  let best: LyricMelodyPhrase | null = null;
-  let bestScore = 0;
-  for (const phrase of SAMPLE_LYRIC_PHRASES) {
-    const phraseTokens = tokenizeLyric(phrase.lyric);
-    let overlap = 0;
-    for (const t of phraseTokens) {
-      if (lineTokens.has(t)) overlap += 1;
-    }
-    if (overlap > bestScore) {
-      bestScore = overlap;
-      best = phrase;
-    }
-  }
-  return bestScore > 0 ? best : null;
-}
 
 const LOCAL_PART_BANDS: Record<string, [number, number]> = {
   soprano: [250, 1000],
@@ -311,15 +83,10 @@ const LOCAL_COACHING: Record<string, string> = {
 function buildLocalAnalyzeResult(
   singerVoicePart: string,
   lineText: string,
-  usingSampleScore: boolean,
-  usingUploadedScore: boolean
+  score: { uploaded: boolean }
 ): AnalyzeResponse {
   const part = singerVoicePart === "everyone" ? "vocals" : singerVoicePart;
-  const scoreSource = usingUploadedScore
-    ? "your uploaded PDF"
-    : usingSampleScore
-      ? SAMPLE_SCORE_TITLE
-      : "the selected score";
+  const scoreSource = score.uploaded ? "your uploaded PDF" : IKAW_SCORE_TITLE;
   return {
     part,
     confidence: 0.84,
@@ -439,9 +206,29 @@ export default function App() {
   const [scoreFile, setScoreFile] = useState<File | null>(null);
   /** Singer flow: section button (lyrics go in analyzeText). */
   const [singerVoicePart, setSingerVoicePart] = useState<string | null>(null);
-  const [tempoBpm, setTempoBpm] = useState(72);
+  const [tempoBpm, setTempoBpm] = useState(85);
   const [isPlayingScore, setIsPlayingScore] = useState(false);
   const [isPlayingTypedLine, setIsPlayingTypedLine] = useState(false);
+  const ikawScoreXmlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (developerMode) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const xml = await loadMusicXmlFromMxl(IKAW_MXL_PATH);
+        if (cancelled) return;
+        ikawScoreXmlRef.current = xml;
+        const bpm = parseScoreTempoBpm(xml);
+        setTempoBpm(Math.round(bpm));
+      } catch {
+        /* ignore prefetch errors; playback will surface */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [developerMode]);
 
   useEffect(() => {
     if (developerMode) return;
@@ -474,7 +261,7 @@ export default function App() {
     setUseRag(true);
     setUseSampleScore(false);
     setRagIngestMsg(
-      `${okRes.chunks_added} text chunk${okRes.chunks_added === 1 ? "" : "s"} from ${okRes.source}. Tips now use your PDF (refresh the page to go back to the provided score only).`
+      `${okRes.chunks_added} text chunk${okRes.chunks_added === 1 ? "" : "s"} from ${okRes.source}. Tips now use your PDF (refresh the page to go back to the built-in ${IKAW_SCORE_TITLE} text only).`
     );
     return okRes;
   }
@@ -484,7 +271,7 @@ export default function App() {
     setUseSampleScore(true);
     setUseRag(false);
     setRagIngestMsg(
-      `using built-in sample context from ${SAMPLE_SCORE_NAME} (fast mode)`
+      `using built-in ${IKAW_SCORE_TITLE} score text and ${IKAW_MXL_NAME} for playback (fast mode)`
     );
   }
 
@@ -496,109 +283,72 @@ export default function App() {
     await ingestScoreFile(scoreFile, "user-upload");
   }
 
+  async function ensureIkawXml(): Promise<string> {
+    if (ikawScoreXmlRef.current) return ikawScoreXmlRef.current;
+    const xml = await loadMusicXmlFromMxl(IKAW_MXL_PATH);
+    ikawScoreXmlRef.current = xml;
+    return xml;
+  }
+
   async function onPlaySampleMelody() {
     if (isPlayingScore) return;
     if (typeof window === "undefined") return;
-    const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) {
-      setAnalyzeErr("This browser can't play audio preview.");
-      return;
-    }
     setAnalyzeErr(null);
     setIsPlayingScore(true);
-
-    const context = new Ctx();
-    const beatSec = 60 / tempoBpm;
-    let t = context.currentTime + 0.03;
-    const master = context.createGain();
-    master.gain.value = 0.11;
-    master.connect(context.destination);
-    const semitoneShift = singerVoicePart ? PART_SEMITONE_SHIFT[singerVoicePart] ?? 0 : 0;
-
-    for (const ev of SAMPLE_OPENING_MELODY) {
-      const duration = ev.beats * beatSec;
-      const osc = context.createOscillator();
-      const gain = context.createGain();
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.26, t + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(0.04, duration - 0.02));
-      osc.type = "triangle";
-      osc.frequency.setValueAtTime(
-        shiftFrequency(noteToFrequency(ev.note), semitoneShift),
-        t
+    try {
+      const xml = await ensureIkawXml();
+      const partId = resolvePartIdForSection(xml, singerVoicePart ?? "soprano");
+      let notes =
+        partId === "__TUTTI__"
+          ? parseTuttiNotes(xml).slice(0, 56)
+          : parsePartNotes(xml, partId).slice(0, 52);
+      notes = shiftNotesToZero(notes);
+      if (!notes.length) {
+        setAnalyzeErr("No notes found in the MusicXML preview.");
+        setIsPlayingScore(false);
+        return;
+      }
+      playNotesWebAudio(notes, tempoBpm, () => setIsPlayingScore(false));
+    } catch (e) {
+      setAnalyzeErr(
+        e instanceof Error ? e.message : "Could not load the MusicXML file."
       );
-      osc.connect(gain);
-      gain.connect(master);
-      osc.start(t);
-      osc.stop(t + duration);
-      t += duration;
-    }
-
-    const totalMs = Math.max(150, Math.round((t - context.currentTime) * 1000) + 40);
-    window.setTimeout(() => {
       setIsPlayingScore(false);
-      void context.close();
-    }, totalMs);
+    }
   }
 
   async function onPlayTypedLine() {
     if (isPlayingTypedLine) return;
-    const phrase = pickPhraseForLine(analyzeText);
-    if (!phrase) {
-      setAnalyzeErr(
-        "No match for that line yet. Try e.g. “have yourself a merry little christmas”, “faithful friends who are dear to us”, or “gather near to us once more”."
-      );
-      return;
-    }
     if (!singerVoicePart) {
       setAnalyzeErr("Choose a section first, then play the line.");
       return;
     }
-    if (typeof window === "undefined") return;
-    const Ctx =
-      window.AudioContext ||
-      (window as typeof window & { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!Ctx) {
-      setAnalyzeErr("This browser can't play audio preview.");
+    if (!analyzeText.trim()) {
+      setAnalyzeErr("Type a line first so we can match lyrics in the score.");
       return;
     }
+    if (typeof window === "undefined") return;
     setAnalyzeErr(null);
     setIsPlayingTypedLine(true);
-    const context = new Ctx();
-    const beatSec = 60 / tempoBpm;
-    let t = context.currentTime + 0.03;
-    const master = context.createGain();
-    master.gain.value = 0.12;
-    master.connect(context.destination);
-    const semitoneShift = PART_SEMITONE_SHIFT[singerVoicePart] ?? 0;
-
-    for (const ev of phrase.events) {
-      const duration = ev.beats * beatSec;
-      const osc = context.createOscillator();
-      const gain = context.createGain();
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.28, t + 0.02);
-      gain.gain.exponentialRampToValueAtTime(
-        0.0001,
-        t + Math.max(0.04, duration - 0.02)
+    try {
+      const xml = await ensureIkawXml();
+      const partId = resolvePartIdForSection(xml, singerVoicePart);
+      const all =
+        partId === "__TUTTI__" ? parseTuttiNotes(xml) : parsePartNotes(xml, partId);
+      let picked = pickNotesForLine(all, analyzeText);
+      picked = shiftNotesToZero(picked);
+      if (!picked.length) {
+        setAnalyzeErr("No notes in that part — try another section.");
+        setIsPlayingTypedLine(false);
+        return;
+      }
+      playNotesWebAudio(picked, tempoBpm, () => setIsPlayingTypedLine(false));
+    } catch (e) {
+      setAnalyzeErr(
+        e instanceof Error ? e.message : "Could not play from MusicXML."
       );
-      osc.type = "triangle";
-      osc.frequency.setValueAtTime(
-        shiftFrequency(noteToFrequency(ev.note), semitoneShift),
-        t
-      );
-      osc.connect(gain);
-      gain.connect(master);
-      osc.start(t);
-      osc.stop(t + duration);
-      t += duration;
-    }
-    const totalMs = Math.max(150, Math.round((t - context.currentTime) * 1000) + 40);
-    window.setTimeout(() => {
       setIsPlayingTypedLine(false);
-      void context.close();
-    }, totalMs);
+    }
   }
 
   async function onAnalyze(e: React.FormEvent) {
@@ -617,17 +367,15 @@ export default function App() {
         return;
       }
       payloadText = `Voice part: ${singerVoicePart}. Line I'm learning: ${payloadText}`;
-      const localResult = buildLocalAnalyzeResult(
-        singerVoicePart,
-        analyzeText.trim(),
-        useSampleScore,
-        useRag
-      );
+      const localResult = buildLocalAnalyzeResult(singerVoicePart, analyzeText.trim(), {
+        uploaded: useRag,
+      });
       setAnalyzeResult(localResult);
       setAnalyzeLoading(false);
       setAnalyzeRefining(true);
       void (async () => {
-        const res = await postAnalyze(payloadText, useRag, useSampleScore, true);
+        const useBundledSampleBackend = useSampleScore && !useRag;
+        const res = await postAnalyze(payloadText, useRag, useBundledSampleBackend, true);
         if (isApiError(res)) {
           setAnalyzeErr("Showing instant tips while the server wakes up.");
           setAnalyzeRefining(false);
@@ -837,8 +585,9 @@ export default function App() {
                 <div className="score-tools">
                   <p className="score-tools-label">choose your score source (optional)</p>
                   <p className="flow-step-desc score-tools-desc">
-                    default sample is <strong>{SAMPLE_SCORE_NAME}</strong> (free to use),
-                    or upload your own sheet music. no recording required for this mode.
+                    default is <strong>{IKAW_SCORE_TITLE}</strong> (bundled lyrics for API / RAG overlap +{" "}
+                    <code>{IKAW_MXL_NAME}</code> for the UI player), or upload your own sheet music. No recording required
+                    for this mode.
                   </p>
                   <button
                     type="button"
@@ -846,34 +595,11 @@ export default function App() {
                     disabled={ragIngestLoading}
                     onClick={() => void onUseSampleScore()}
                   >
-                    {ragIngestLoading
-                      ? "loading sample…"
-                      : `use default sample: ${SAMPLE_SCORE_NAME}`}
+                    {ragIngestLoading ? "loading…" : `use built-in demo: ${IKAW_SCORE_TITLE}`}
                   </button>
-                  <a
-                    className="score-tools-link"
-                    href={SAMPLE_SCORE_PATH}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    preview default sample pdf
-                  </a>
-                  <details className="sample-preview" open>
-                    <summary>preview: {SAMPLE_SCORE_NAME}</summary>
-                    <object
-                      className="sample-preview-frame"
-                      data={SAMPLE_SCORE_PATH}
-                      type="application/pdf"
-                    >
-                      <p className="flow-step-desc">
-                        pdf preview unavailable in this browser.{" "}
-                        <a href={SAMPLE_SCORE_PATH} target="_blank" rel="noreferrer">
-                          open sample score
-                        </a>
-                        .
-                      </p>
-                    </object>
-                  </details>
+                  <p className="flow-step-desc score-tools-desc">
+                    Open the singer-facing app (non–developer mode) to try “hear opening” / “hear my line” from the MXL.
+                  </p>
                   <label className="label" htmlFor="score-upload-dev">
                     or upload your own score
                   </label>
@@ -1018,7 +744,8 @@ export default function App() {
           <section className="card card-singer-flow">
             <h2 className="card-title">rehearsal helper</h2>
             <p className="card-desc card-desc-tight singer-intro">
-              This page already includes <strong>{SAMPLE_SCORE_TITLE}</strong> for tips. You can skip uploads.
+              This page includes <strong>{IKAW_SCORE_TITLE}</strong> as the built-in demo: bundled MusicXML for playback and
+              lyric text for tips.
             </p>
             <ol className="singer-quick" aria-label="Quick steps">
               <li>
@@ -1028,7 +755,7 @@ export default function App() {
                 <strong>Get tips</strong> — answers show up fast, then may sharpen when the server catches up.
               </li>
               <li>
-                <strong>Optional:</strong> hear a <em>simple preview</em> (not every printed note yet) or add a recording for split/EQ.
+                <strong>Optional:</strong> hear notes from the MXL or add a recording for split/EQ.
               </li>
             </ol>
             <details className="singer-details">
@@ -1039,11 +766,10 @@ export default function App() {
                   lyrics still help tips.
                 </p>
                 <p>
-                  <strong>Hear buttons</strong> play a short practice melody (opening + a few known lines). They are not full
-                  score-faithful audio yet.
+                  <strong>Hear opening</strong> plays the first soprano (P1) notes from the built-in MusicXML (MuseScore-style SATB export).
                 </p>
                 <p>
-                  <strong>Later:</strong> MusicXML or MIDI import for note-accurate SATB playback per syllable.
+                  <strong>Hear my line</strong> matches your typed words to lyrics on your selected part (simple overlap).
                 </p>
               </div>
             </details>
@@ -1059,13 +785,23 @@ export default function App() {
                       <span className="flow-step-num">1</span> optional: PDF or recording
                     </h3>
                     <p className="flow-step-desc">
-                      Skip this block unless you need it. Tips already use the built-in score below.
+                      Skip this block unless you need it. Tips use the built-in {IKAW_SCORE_TITLE} text unless you load your own PDF.
                     </p>
 
                     <div className="provided-score-block">
                       <p className="provided-score-head">built-in score</p>
                       <p className="flow-step-desc flow-step-desc-tight provided-score-lead">
-                        <strong>{SAMPLE_SCORE_NAME}</strong> — used for tips automatically.
+                        {useRag ? (
+                          <>
+                            Tips use <strong>your uploaded PDF</strong> until you refresh. Hear buttons still use the bundled{" "}
+                            <code>{IKAW_MXL_NAME}</code>.
+                          </>
+                        ) : (
+                          <>
+                            <strong>{IKAW_SCORE_TITLE}</strong> — lyric text for the API and{" "}
+                            <code>public/samples/{IKAW_MXL_NAME}</code> for on-page playback (no upload needed).
+                          </>
+                        )}
                       </p>
                       <div className="score-audio-row">
                         <button
@@ -1074,7 +810,7 @@ export default function App() {
                           onClick={() => void onPlaySampleMelody()}
                           disabled={isPlayingScore}
                         >
-                          {isPlayingScore ? "playing…" : "hear opening (preview)"}
+                          {isPlayingScore ? "playing…" : "hear opening from score"}
                         </button>
                         <label className="score-audio-tempo" htmlFor="score-tempo">
                           speed
@@ -1092,29 +828,11 @@ export default function App() {
                         </label>
                       </div>
                       <p className="flow-step-desc flow-step-desc-tight muted-tight">
-                        Preview only — not every note on the page. Pick your part in the next step to shift the preview.
+                        Opening follows the <strong>part you selected</strong> (matched from the score’s part names) or all parts together for “everyone”. “Hear my line” uses the same part plus your typed lyrics.
                       </p>
-                      <a
-                        className="score-tools-link"
-                        href={SAMPLE_SCORE_PATH}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        open PDF in a new tab
-                      </a>
-                      <object
-                        className="sample-preview-frame sample-preview-prominent"
-                        data={SAMPLE_SCORE_PATH}
-                        type="application/pdf"
-                      >
-                        <p className="flow-step-desc">
-                          PDF preview unavailable in this browser.{" "}
-                          <a href={SAMPLE_SCORE_PATH} target="_blank" rel="noreferrer">
-                            open provided score
-                          </a>
-                          .
-                        </p>
-                      </object>
+                      <p className="flow-step-desc flow-step-desc-tight ikaw-score-note">
+                        There is no PDF for this built-in piece — open the MXL in your notation app if you need a printed score.
+                      </p>
                     </div>
 
                     <div className="form flow-step-stack">
@@ -1141,7 +859,7 @@ export default function App() {
                       </button>
                       {!scoreFile ? (
                         <p className="file-picked muted">
-                          nothing uploaded — tips keep using the built-in <strong>{SAMPLE_SCORE_TITLE}</strong> score (that's normal).
+                          nothing uploaded — tips use the built-in <strong>{IKAW_SCORE_TITLE}</strong> demo (that&apos;s normal).
                         </p>
                       ) : (
                         <p className="file-picked">
@@ -1224,7 +942,10 @@ export default function App() {
                       <span className="flow-step-num">{stepTips}</span> part + line → tips
                     </h3>
                     <p className="flow-step-desc">
-                      Use words from the PDF when you can — tips match better. Hear buttons are short previews only.
+                      {useRag
+                        ? "Use wording from your uploaded PDF when you can — tips match better."
+                        : "Type lyrics the way they appear on your part — “hear my line” matches syllables in the MXL."}{" "}
+                      Hear buttons are short previews only.
                     </p>
                     <div className="part-grid" role="group" aria-label="Voice sections">
                       {SINGER_VOICE_SECTIONS.map((label) => (
@@ -1251,7 +972,7 @@ export default function App() {
                         rows={3}
                         value={analyzeText}
                         onChange={(e) => setAnalyzeText(e.target.value)}
-                        placeholder={`Example from ${SAMPLE_SCORE_TITLE}: “have yourself a merry little christmas”`}
+                        placeholder={`Type words from your line in ${IKAW_SCORE_TITLE} (Tagalog / syllables as on your part).`}
                       />
                       <button
                         type="submit"
@@ -1282,7 +1003,7 @@ export default function App() {
                           {isPlayingTypedLine ? "playing…" : "hear my line"}
                         </button>
                         <span className="flow-step-desc flow-step-desc-tight muted-tight">
-                          Short melody — not full score playback.
+                          Plays notes from your part’s MXL where lyrics overlap your typing (simple match).
                         </span>
                       </div>
                     </form>
