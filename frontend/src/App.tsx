@@ -19,7 +19,7 @@ const SAMPLE_SCORE_TITLE = "Have Yourself a Merry Little Christmas";
 const SAMPLE_SCORE_NAME = `${SAMPLE_SCORE_TITLE}.pdf`;
 
 const TAGLINE_SINGER =
-  `\u266a ${SAMPLE_SCORE_TITLE} is built in — no upload required for tips. Tap your section, type your line, get coaching; upload only if you want a different PDF or a rehearsal recording for split/EQ.`;
+  "\u266a Built-in score for tips. Pick your part, type a line, tap get tips. Upload only if you want another PDF or a recording for split/EQ.";
 
 const TAGLINE_DEV =
   "\u266a practice tool for choirs & a cappella groups: pull out vocal lines, get cues for your part, then gently eq so your line sits forward in the mix - powered by stem separation (isolated tracks), an LLM (plain-language \u2192 structured data), and band-pass DSP (frequency shaping, not magic).";
@@ -150,6 +150,62 @@ const SAMPLE_LYRIC_PHRASES: LyricMelodyPhrase[] = [
       { note: "A4", beats: 1 },
       { note: "B4", beats: 1 },
       { note: "C5", beats: 1 },
+      { note: "B4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+    ],
+  },
+  {
+    lyric: "faithful friends who are dear to us",
+    events: [
+      { note: "E4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "B4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 2 },
+    ],
+  },
+  {
+    lyric: "gather near to us once more",
+    events: [
+      { note: "G4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 2 },
+      { note: "E4", beats: 1 },
+      { note: "G4", beats: 1 },
+    ],
+  },
+  {
+    lyric: "someday soon we all will be together",
+    events: [
+      { note: "A4", beats: 1 },
+      { note: "B4", beats: 1 },
+      { note: "C5", beats: 1 },
+      { note: "B4", beats: 1 },
+      { note: "A4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 2 },
+    ],
+  },
+  {
+    lyric: "here we are as in olden days",
+    events: [
+      { note: "G4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "D4", beats: 1 },
+      { note: "E4", beats: 1 },
+      { note: "G4", beats: 1 },
+      { note: "A4", beats: 2 },
+    ],
+  },
+  {
+    lyric: "happy golden days of yore",
+    events: [
       { note: "B4", beats: 1 },
       { note: "A4", beats: 1 },
       { note: "G4", beats: 1 },
@@ -490,7 +546,7 @@ export default function App() {
     const phrase = pickPhraseForLine(analyzeText);
     if (!phrase) {
       setAnalyzeErr(
-        "Couldn't match that lyric yet. Try a line from the sample like “have yourself a merry little christmas”."
+        "No match for that line yet. Try e.g. “have yourself a merry little christmas”, “faithful friends who are dear to us”, or “gather near to us once more”."
       );
       return;
     }
@@ -962,24 +1018,35 @@ export default function App() {
           <section className="card card-singer-flow">
             <h2 className="card-title">rehearsal helper</h2>
             <p className="card-desc card-desc-tight singer-intro">
-              Tips use our bundled PDF (<strong>{SAMPLE_SCORE_NAME}</strong>) automatically.
-              Add your own PDF only for another piece; add audio only if you want split and EQ.
+              This page already includes <strong>{SAMPLE_SCORE_TITLE}</strong> for tips. You can skip uploads.
             </p>
-            <div
-              className="built-in-notice"
-              role="region"
-              aria-labelledby="built-in-notice-heading"
-            >
-              <p id="built-in-notice-heading" className="built-in-notice-title">
-                Can't upload your own PDF? You don't need one.
-              </p>
-              <p className="built-in-notice-body">
-                The complete <strong>{SAMPLE_SCORE_TITLE}</strong> sheet music is{" "}
-                <strong>already built into this page</strong>. You can go straight to your section and line —{" "}
-                <strong>no upload is required</strong> for tips on this piece. Only use the PDF upload if you're working from{" "}
-                <strong>different music</strong>; only use the recording upload if you want <strong>split / EQ</strong> on a rehearsal track.
-              </p>
-            </div>
+            <ol className="singer-quick" aria-label="Quick steps">
+              <li>
+                <strong>Pick your part</strong> and <strong>type a line</strong> from the song.
+              </li>
+              <li>
+                <strong>Get tips</strong> — answers show up fast, then may sharpen when the server catches up.
+              </li>
+              <li>
+                <strong>Optional:</strong> hear a <em>simple preview</em> (not every printed note yet) or add a recording for split/EQ.
+              </li>
+            </ol>
+            <details className="singer-details">
+              <summary>optional — uploads &amp; how playback works</summary>
+              <div className="singer-details-body">
+                <p>
+                  <strong>PDF upload</strong> only if you are practicing something else. Scanned PDFs often work poorly — typed
+                  lyrics still help tips.
+                </p>
+                <p>
+                  <strong>Hear buttons</strong> play a short practice melody (opening + a few known lines). They are not full
+                  score-faithful audio yet.
+                </p>
+                <p>
+                  <strong>Later:</strong> MusicXML or MIDI import for note-accurate SATB playback per syllable.
+                </p>
+              </div>
+            </details>
 
             {(() => {
               const hasRecording = Boolean(file);
@@ -989,17 +1056,16 @@ export default function App() {
                 <>
                   <div className="flow-step flow-step-first">
                     <h3 className="flow-step-title">
-                      <span className="flow-step-num">1</span> upload recording and/or PDF
+                      <span className="flow-step-num">1</span> optional: PDF or recording
                     </h3>
                     <p className="flow-step-desc">
-                      Optional uploads only. Split and EQ need a recording; swapping scores needs your PDF.
-                      Otherwise skip straight to your section — the bundled PDF below is already active for tips.
+                      Skip this block unless you need it. Tips already use the built-in score below.
                     </p>
 
                     <div className="provided-score-block">
-                      <p className="provided-score-head">provided sheet music</p>
+                      <p className="provided-score-head">built-in score</p>
                       <p className="flow-step-desc flow-step-desc-tight provided-score-lead">
-                        <strong>{SAMPLE_SCORE_NAME}</strong> — this is your default score for tips (nothing to upload).
+                        <strong>{SAMPLE_SCORE_NAME}</strong> — used for tips automatically.
                       </p>
                       <div className="score-audio-row">
                         <button
@@ -1008,10 +1074,10 @@ export default function App() {
                           onClick={() => void onPlaySampleMelody()}
                           disabled={isPlayingScore}
                         >
-                          {isPlayingScore ? "playing sample…" : "play sample melody"}
+                          {isPlayingScore ? "playing…" : "hear opening (preview)"}
                         </button>
                         <label className="score-audio-tempo" htmlFor="score-tempo">
-                          tempo
+                          speed
                           <input
                             id="score-tempo"
                             type="range"
@@ -1025,8 +1091,8 @@ export default function App() {
                           <span>{tempoBpm} bpm</span>
                         </label>
                       </div>
-                      <p className="flow-step-desc flow-step-desc-tight">
-                        Plays an audible note preview from the built-in score; selected section shifts register for practice.
+                      <p className="flow-step-desc flow-step-desc-tight muted-tight">
+                        Preview only — not every note on the page. Pick your part in the next step to shift the preview.
                       </p>
                       <a
                         className="score-tools-link"
@@ -1053,14 +1119,10 @@ export default function App() {
 
                     <div className="form flow-step-stack">
                       <label className="label" htmlFor="score-upload-singer">
-                        different piece? upload your PDF <span className="label-tag">optional</span>
+                        different piece? PDF <span className="label-tag">optional</span>
                       </label>
-                      <p className="flow-step-desc flow-step-desc-tight built-in-skip-hint">
-                        <strong>Staying on {SAMPLE_SCORE_TITLE}?</strong> Skip this — the score above is already loaded for tips.
-                      </p>
                       <p className="flow-step-desc flow-step-desc-tight">
-                        Only if you're practicing <strong>other sheet music</strong>: load your file here.
-                        Text-based PDFs work best; scanned pages sometimes won't extract — try another export if tips miss your lyrics.
+                        Skip if you are staying on the built-in song. Other pieces only.
                       </p>
                       <input
                         id="score-upload-singer"
@@ -1075,7 +1137,7 @@ export default function App() {
                         disabled={ragIngestLoading || !scoreFile}
                         onClick={() => void onUploadOwnScore()}
                       >
-                        load my PDF for tips
+                        load PDF for tips
                       </button>
                       {!scoreFile ? (
                         <p className="file-picked muted">
@@ -1083,7 +1145,7 @@ export default function App() {
                         </p>
                       ) : (
                         <p className="file-picked">
-                          picked: <strong>{scoreFile.name}</strong> — tap “load my PDF for tips”.
+                          picked: <strong>{scoreFile.name}</strong> — tap “load PDF for tips”.
                         </p>
                       )}
                       {ragIngestMsg && <p className="ok-msg">{ragIngestMsg}</p>}
@@ -1094,6 +1156,9 @@ export default function App() {
                       <label className="label" htmlFor="audio-singer">
                         rehearsal recording <span className="label-tag">optional</span>
                       </label>
+                      <p className="flow-step-desc flow-step-desc-tight muted-tight">
+                        Needed only for split + EQ below.
+                      </p>
                       <input
                         id="audio-singer"
                         type="file"
@@ -1119,7 +1184,7 @@ export default function App() {
                         <span className="flow-step-num">2</span> split recording — <span className="step-scope">recording only</span>
                       </h3>
                       <p className="flow-step-desc">
-                        Separates singers from piano or backing so you can solo the vocal stem. Only shown because you added a recording in step 1.
+                        Pulls vocals away from piano or backing. Only shows when you added a recording.
                       </p>
                       <form onSubmit={onSeparate} className="form flow-step-form">
                         <button
@@ -1156,12 +1221,10 @@ export default function App() {
 
                   <div className="flow-step">
                     <h3 className="flow-step-title">
-                      <span className="flow-step-num">{stepTips}</span> your section and line
+                      <span className="flow-step-num">{stepTips}</span> part + line → tips
                     </h3>
                     <p className="flow-step-desc">
-                      Tap your section, then type the line you're learning (paste lyrics from the PDF or score notes).
-                      <strong> Built-in score users:</strong> you don't need to upload anything — just pull wording from the provided PDF above.
-                      Matching words from your score yields richer tips. Default cues match <strong>{SAMPLE_SCORE_TITLE}</strong>; after you load a different PDF, cues match that file instead.
+                      Use words from the PDF when you can — tips match better. Hear buttons are short previews only.
                     </p>
                     <div className="part-grid" role="group" aria-label="Voice sections">
                       {SINGER_VOICE_SECTIONS.map((label) => (
@@ -1202,7 +1265,7 @@ export default function App() {
                         {analyzeLoading
                           ? "working…"
                           : analyzeRefining
-                            ? "instant tip shown… refining"
+                            ? "updating…"
                             : "get tips for my part"}
                       </button>
                       <div className="score-audio-row score-audio-row-inline">
@@ -1217,18 +1280,16 @@ export default function App() {
                           }
                         >
                           {isPlayingTypedLine
-                            ? "playing this line…"
-                            : "hear this line (selected part)"}
+                            ? "playing preview…"
+                            : "preview this line"}
                         </button>
-                        <span className="flow-step-desc flow-step-desc-tight">
-                          Sample phrase playback from {SAMPLE_SCORE_TITLE}.
+                        <span className="flow-step-desc flow-step-desc-tight muted-tight">
+                          Short melody — not full score playback.
                         </span>
                       </div>
                     </form>
                     {analyzeRefining ? (
-                      <p className="flow-hint">
-                        Instant tip shown. Refining with full score analysis in the background…
-                      </p>
+                      <p className="flow-hint">Updating tips…</p>
                     ) : null}
                     {analyzeErr && <p className="err">{analyzeErr}</p>}
                     {analyzeResult ? <SingerSummary result={analyzeResult} /> : null}
@@ -1240,9 +1301,7 @@ export default function App() {
                       <span className="label-tag">recording only</span>
                     </h3>
                     <p className="flow-step-desc">
-                      Gentle EQ on the separated vocal track so your section is easier to hear in headphones —{" "}
-                      <strong>only after</strong> you added a recording (step 1), ran split (step 2), and got tips.
-                      Skip this entire step if you’re only working from sheet music.
+                      Only after recording + split + tips. Sheet-music-only? Skip.
                     </p>
                     <div className="emph-row">
                       <button
