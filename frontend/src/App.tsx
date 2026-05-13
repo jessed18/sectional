@@ -12,6 +12,7 @@ import {
   type SeparateResponse,
 } from "./api";
 import {
+  ensureAudioUnlocked,
   IKAW_MXL_PATH,
   loadMusicXmlFromMxl,
   parsePartNotes,
@@ -19,7 +20,10 @@ import {
   parseTuttiNotes,
   pickNotesForLine,
   playNotesWebAudio,
+  playTestBeep,
+  primeAudioOnUserGesture,
   resolvePartIdForSection,
+  resumeAudioIfPossible,
   shiftNotesToZero,
 } from "./musicxmlPlay";
 import "./App.css";
@@ -27,6 +31,18 @@ import "./App.css";
 const STORAGE_DEV = "sectional-developer-mode";
 const IKAW_SCORE_TITLE = "Ikaw Ang Aking Mahal";
 const IKAW_MXL_NAME = "ikaw-ang-aking-mahal.mxl";
+
+/** Syllable-style phrases from the built-in MusicXML lyrics (same text as tips RAG sample). */
+const IKAW_HINT_LINES: readonly string[] = [
+  "Ang na is ko sa na'y in yong ma la man",
+  "Sa hi la ga o sa ti mog o kan lu ran",
+  "At ka hit sa'n pa man",
+  "I kaw ang a king ma hal",
+  "I kaw lang ang a king ma ha al",
+  "Ang pag i big mo'y a king kai lang an",
+  "Ma ni wa la ka sa na",
+  "Kung si no'ng a king ma hal",
+];
 
 const TAGLINE_SINGER =
   "\u266a Built-in MusicXML demo for tips and playback. Pick your part, type a line, tap get tips. Upload only if you want another PDF or a recording for split/EQ.";
@@ -209,7 +225,20 @@ export default function App() {
   const [tempoBpm, setTempoBpm] = useState(85);
   const [isPlayingScore, setIsPlayingScore] = useState(false);
   const [isPlayingTypedLine, setIsPlayingTypedLine] = useState(false);
+  const [showSoundHelp, setShowSoundHelp] = useState(false);
   const ikawScoreXmlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const wake = () => {
+      if (!document.hidden) resumeAudioIfPossible();
+    };
+    document.addEventListener("visibilitychange", wake);
+    window.addEventListener("focus", wake);
+    return () => {
+      document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("focus", wake);
+    };
+  }, []);
 
   useEffect(() => {
     if (developerMode) return;
@@ -283,6 +312,22 @@ export default function App() {
     await ingestScoreFile(scoreFile, "user-upload");
   }
 
+  async function onEnableSoundBarClick() {
+    primeAudioOnUserGesture();
+    const unlocked = await ensureAudioUnlocked();
+    if (!unlocked) {
+      setAnalyzeErr(
+        "Audio still cannot start. Unmute this browser tab, raise system volume, and check headphones or Bluetooth. No website can override device mute or missing speakers."
+      );
+      return;
+    }
+    const beepOk = await playTestBeep();
+    if (beepOk) {
+      setShowSoundHelp(false);
+      setAnalyzeErr(null);
+    }
+  }
+
   async function ensureIkawXml(): Promise<string> {
     if (ikawScoreXmlRef.current) return ikawScoreXmlRef.current;
     const xml = await loadMusicXmlFromMxl(IKAW_MXL_PATH);
@@ -293,6 +338,7 @@ export default function App() {
   async function onPlaySampleMelody() {
     if (isPlayingScore) return;
     if (typeof window === "undefined") return;
+    primeAudioOnUserGesture();
     setAnalyzeErr(null);
     setIsPlayingScore(true);
     try {
@@ -308,7 +354,13 @@ export default function App() {
         setIsPlayingScore(false);
         return;
       }
-      playNotesWebAudio(notes, tempoBpm, () => setIsPlayingScore(false));
+      const played = await playNotesWebAudio(notes, tempoBpm, () => setIsPlayingScore(false));
+      if (!played) {
+        setShowSoundHelp(true);
+        setAnalyzeErr(
+          "Preview audio did not start. Tap “Enable sound” at the bottom (or “No sound?” above), unmute this tab, then try again."
+        );
+      }
     } catch (e) {
       setAnalyzeErr(
         e instanceof Error ? e.message : "Could not load the MusicXML file."
@@ -328,6 +380,7 @@ export default function App() {
       return;
     }
     if (typeof window === "undefined") return;
+    primeAudioOnUserGesture();
     setAnalyzeErr(null);
     setIsPlayingTypedLine(true);
     try {
@@ -342,7 +395,13 @@ export default function App() {
         setIsPlayingTypedLine(false);
         return;
       }
-      playNotesWebAudio(picked, tempoBpm, () => setIsPlayingTypedLine(false));
+      const played = await playNotesWebAudio(picked, tempoBpm, () => setIsPlayingTypedLine(false));
+      if (!played) {
+        setShowSoundHelp(true);
+        setAnalyzeErr(
+          "Preview audio did not start. Tap “Enable sound” at the bottom (or “No sound?” in step 1), unmute this tab, then try again."
+        );
+      }
     } catch (e) {
       setAnalyzeErr(
         e instanceof Error ? e.message : "Could not play from MusicXML."
@@ -807,6 +866,7 @@ export default function App() {
                         <button
                           type="button"
                           className="btn"
+                          onPointerDown={() => primeAudioOnUserGesture()}
                           onClick={() => void onPlaySampleMelody()}
                           disabled={isPlayingScore}
                         >
@@ -827,6 +887,15 @@ export default function App() {
                           <span>{tempoBpm} bpm</span>
                         </label>
                       </div>
+                      <p className="sound-trouble-row">
+                        <button
+                          type="button"
+                          className="btn-linkish"
+                          onClick={() => setShowSoundHelp(true)}
+                        >
+                          No sound?
+                        </button>
+                      </p>
                       <p className="flow-step-desc flow-step-desc-tight muted-tight">
                         Opening follows the <strong>part you selected</strong> (matched from the score’s part names) or all parts together for “everyone”. “Hear my line” uses the same part plus your typed lyrics.
                       </p>
@@ -966,6 +1035,22 @@ export default function App() {
                       <label className="label" htmlFor="nl-singer">
                         line you're learning
                       </label>
+                      <p className="flow-step-desc flow-step-desc-tight ikaw-hint-intro">
+                        Stuck? These lines are copied from the built-in score’s lyrics (same syllables as in the MXL).
+                      </p>
+                      <div className="ikaw-hint-lines" role="group" aria-label="Example lines from the score">
+                        {IKAW_HINT_LINES.map((line) => (
+                          <button
+                            key={line}
+                            type="button"
+                            className="btn ghost sm ikaw-hint-chip"
+                            title={line}
+                            onClick={() => setAnalyzeText(line)}
+                          >
+                            {line}
+                          </button>
+                        ))}
+                      </div>
                       <textarea
                         id="nl-singer"
                         className="textarea textarea-short"
@@ -993,6 +1078,7 @@ export default function App() {
                         <button
                           type="button"
                           className="btn ghost"
+                          onPointerDown={() => primeAudioOnUserGesture()}
                           onClick={() => void onPlayTypedLine()}
                           disabled={
                             isPlayingTypedLine ||
@@ -1068,6 +1154,24 @@ export default function App() {
           <span>having trouble? ask your music director or try turning on developer mode.</span>
         </footer>
       )}
+      {!developerMode && showSoundHelp ? (
+        <div className="sound-help-bar" role="dialog" aria-labelledby="sound-help-title">
+          <div className="sound-help-inner">
+            <p className="sound-help-text" id="sound-help-title">
+              <strong>No website can unmute your device or speakers for you.</strong> If note previews are silent: tap{" "}
+              <strong>Enable sound</strong>, unmute this browser tab, raise system volume, and check headphones or Bluetooth.
+            </p>
+            <div className="sound-help-actions">
+              <button type="button" className="btn primary" onClick={() => void onEnableSoundBarClick()}>
+                Enable sound
+              </button>
+              <button type="button" className="btn ghost" onClick={() => setShowSoundHelp(false)}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
