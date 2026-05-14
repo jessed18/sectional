@@ -339,18 +339,18 @@ export function pickNotesForLine(notes: ScoreNote[], line: string): ScoreNote[] 
   for (let i = 0; i < sorted.length; i++) {
     let joined = "";
     const chunk: ScoreNote[] = [];
-    for (let j = i; j < Math.min(sorted.length, i + 64); j++) {
+    for (let j = i; j < Math.min(sorted.length, i + 96); j++) {
       const n = sorted[j];
-      if (n.lyric) joined += n.lyric;
+      if (n.lyric) joined += (joined ? " " : "") + n.lyric;
       chunk.push(n);
       const got = new Set(tokenize(joined));
       let score = 0;
       for (const t of got) if (want.has(t)) score++;
-      if (score > bestScore) {
+      if (score > bestScore || (score === bestScore && score > 0 && chunk.length > best.length)) {
         bestScore = score;
         best = chunk.slice();
       }
-      if (score === 0 && joined.length > 48) break;
+      if (score === 0 && joined.length > 72) break;
     }
   }
 
